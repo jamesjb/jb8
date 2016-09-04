@@ -1,0 +1,8 @@
+[package]
+name = "jb8"
+version = "0.1.0"
+authors = ["James Bielman <jamesjb@gmail.com>"]
+build = "build.rs"
+
+[dependencies]
+bitflags = "0.7.0"

@@ -1,0 +1,1431 @@
+//
+// cpu.rs --- 6809 CPU core.
+//
+// Copyright (C) 2016, James Bielman <jamesjb@gmail.com>
+// All Rights Reserved.
+//
+// Released under the "BSD3" license. See the file "LICENSE"
+// for details.
+//
+
+#![allow(dead_code)]
+#![allow(unused_variables)]
+#![allow(non_snake_case)]
+
+use mem::Mem;
+use std::fmt;
+
+bitflags!{
+    pub flags CCFlags: u8 {
+        const CC_E = 0b10000000,
+        const CC_F = 0b01000000,
+        const CC_H = 0b00100000,
+        const CC_I = 0b00010000,
+        const CC_N = 0b00001000,
+        const CC_Z = 0b00000100,
+        const CC_V = 0b00000010,
+        const CC_C = 0b00000001,
+    }
+}
+
+impl CCFlags {
+    fn set_if(&mut self, val: Self, cond: bool) {
+        if cond {
+            self.insert(val);
+        } else {
+            self.remove(val);
+        }
+    }
+}
+
+impl fmt::Display for CCFlags {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}{}{}{}{}{}{}{}",
+               if self.contains(CC_E) { "E" } else { "" },
+               if self.contains(CC_F) { "F" } else { "" },
+               if self.contains(CC_H) { "H" } else { "" },
+               if self.contains(CC_I) { "I" } else { "" },
+               if self.contains(CC_N) { "N" } else { "" },
+               if self.contains(CC_Z) { "Z" } else { "" },
+               if self.contains(CC_V) { "V" } else { "" },
+               if self.contains(CC_C) { "C" } else { "" })
+    }
+}
+
+/// The set of 6809 CPU registers.
+pub struct Regs {
+    pub a: u8,
+    pub b: u8,
+    pub x: u16,
+    pub y: u16,
+    pub u: u16,
+    pub s: u16,
+    pub pc: u16,
+    pub dp: u8,
+    pub cc: CCFlags,
+}
+
+impl Regs {
+    /// Create registers in their power-on state.
+    pub fn new() -> Regs {
+        Regs {
+            a: 0,
+            b: 0,
+            x: 0,
+            y: 0,
+            u: 0,
+            s: 0,
+            pc: 0,
+            dp: 0,
+            cc: CCFlags::empty(),
+        }
+    }
+
+    /// Return the value of `A` and `A` combined as the `D` register.
+    pub fn d(&self) -> u16 {
+        let hi = self.a as u16;
+        let lo = self.b as u16;
+        (hi << 8) | lo
+    }
+
+    /// Dump all registers to the standard output.
+    pub fn dump(&self) {
+        print!("A={:02X} B={:02X} ", self.a, self.b);
+        print!("X={:04X} Y={:04X} U={:04X} S={:04X} ",
+               self.x, self.y, self.u, self.s);
+        println!("PC={:04X} DP={:02X} CC={:02X} ({})",
+                 self.pc, self.dp, self.cc.bits, self.cc);
+    }
+}
+
+/////////////////////////////////////////////////////////////////////
+// CPU Emulation
+
+pub struct CPU<M: Mem> {
+    pub regs: Regs,
+    pub mem: M,
+}
+
+impl <M: Mem> CPU<M> {
+    pub fn new(mem: M) -> CPU<M> {
+        CPU {
+            regs: Regs::new(),
+            mem: mem,
+        }
+    }
+
+    /// Dump registers to the standard output.
+    pub fn dump_regs(&self) {
+        self.regs.dump();
+    }
+
+    /// Read an 8-bit value from memory at `pc` then increment `pc` by 1.
+    fn fetchb(&mut self) -> u8 {
+        let val = self.mem.loadb(self.regs.pc);
+        self.regs.pc = self.regs.pc.wrapping_add(1);
+        val
+    }
+
+    /// Read a 16-bit value from memory at `pc` then increment `pc` by 2.
+    fn fetchw(&mut self) -> u16 {
+        let val = self.mem.loadw(self.regs.pc);
+        self.regs.pc = self.regs.pc.wrapping_add(2);
+        val
+    }
+
+    /// Push a byte onto the SP stack.
+    fn pushb_s(&mut self, val: u8) {
+        self.regs.s = self.regs.s.wrapping_sub(1);
+        self.mem.storeb(self.regs.s, val);
+    }
+
+    /// Pop a byte from the SP stack.
+    fn popb_s(&mut self) -> u8 {
+        let val = self.mem.loadb(self.regs.s);
+        self.regs.s = self.regs.s.wrapping_add(1);
+        val
+    }
+
+    /// Push a word onto the SP stack.
+    fn pushw_s(&mut self, val: u16) {
+        self.pushb_s(((val >> 0) & 0xff) as u8);
+        self.pushb_s(((val >> 8) & 0xff) as u8);
+    }
+
+    /// Pop a word from the SP stack.
+    fn popw_s(&mut self) -> u16 {
+        let hi = self.popb_s() as u16;
+        let lo = self.popb_s() as u16;
+        (hi << 8) | lo
+    }
+}
+
+/////////////////////////////////////////////////////////////////////
+// Addressing Modes
+
+impl <M: Mem> CPU<M> {
+    /// 8-bit immediate addressing.
+    fn imm8(&mut self) -> u16 {
+        let addr = self.regs.pc;
+        self.regs.pc = self.regs.pc.wrapping_add(1);
+        addr
+    }
+
+    /// 16-bit immediate addressing.
+    fn imm16(&mut self) -> u16 {
+        let addr = self.regs.pc;
+        self.regs.pc = self.regs.pc.wrapping_add(2);
+        addr
+    }
+
+    /// Extended addressing.
+    fn extended(&mut self) -> u16 {
+        self.fetchw()
+    }
+
+    /// Direct addressing.
+    fn direct(&mut self) -> u16 {
+        let hi = self.regs.dp as u16;
+        let lo = self.fetchb() as u16;
+
+        (hi << 8) | lo
+    }
+
+    /// Return a reference to an indexed register from a postbyte.
+    fn indexed_reg(&mut self, postbyte: u8) -> &mut u16 {
+        match (postbyte >> 5) & 0x03 {
+            0b00 => &mut self.regs.x,
+            0b01 => &mut self.regs.y,
+            0b10 => &mut self.regs.u,
+            0b11 => &mut self.regs.s,
+            _    => panic!("Unexpected indexed register value"),
+        }
+    }
+
+    /// Return the register value for an indexed mode postbyte.
+    fn indexed_reg_val(&mut self, postbyte: u8) -> u16 {
+        *self.indexed_reg(postbyte)
+    }
+
+    /// Add a signed offset to an indexed mode register.
+    fn indexed_reg_inc(&mut self, postbyte: u8, offset: i16) {
+        let p = self.indexed_reg(postbyte);
+        *p = (*p as i16).wrapping_add(offset) as u16;
+    }
+
+    /// Indexed addressing. By far the most complex addressing mode.
+    fn indexed(&mut self) -> u16 {
+        let postbyte = self.fetchb();
+
+        // If the top bit is clear, it's `EA = ,R + 5-bit offset`.
+        if (postbyte & 0x80) == 0 {
+            // Mask out 5-bit signed offset and sign extend.
+            let offset = (((postbyte & 0x1f) ^ 0x10) - 0x10) as i16;
+            let val = self.indexed_reg_val(postbyte) as i16;
+            return val.wrapping_add(offset) as u16;
+        }
+
+        // Otherwise, look up the mode based on the lower 4 bits:
+        let ixmode = postbyte & 0x0f;
+
+        match ixmode {
+            0b0000 => {     // ,R+
+                let addr = self.indexed_reg_val(postbyte);
+                self.indexed_reg_inc(postbyte, 1);
+                addr
+            },
+            0b0001 => {     // ,R++
+                let addr = self.indexed_reg_val(postbyte);
+                self.indexed_reg_inc(postbyte, 2);
+                addr
+            },
+            0b0010 => {     // ,-R
+                self.indexed_reg_inc(postbyte, -1);
+                self.indexed_reg_val(postbyte)
+            },
+            0b0011 => {     // ,--R
+                self.indexed_reg_inc(postbyte, -2);
+                self.indexed_reg_val(postbyte)
+            },
+            0b0100 => {     // EA = ,R + 0 offset
+                self.indexed_reg_val(postbyte)
+            },
+            0b0101 => {     // EA = ,R + B
+                let base = self.indexed_reg_val(postbyte) as i16;
+                let offset = (self.regs.b as i8) as i16;
+                base.wrapping_add(offset) as u16
+            },
+            0b0110 => {     // EA = ,R + A
+                let base = self.indexed_reg_val(postbyte) as i16;
+                let offset = (self.regs.a as i8) as i16;
+                base.wrapping_add(offset) as u16
+            },
+            0b1000 => {     // EA = ,R + 8-bit offset
+                let base = self.indexed_reg_val(postbyte) as i16;
+                let offset = self.fetchb() as i16;
+                base.wrapping_add(offset) as u16
+            }
+            0b1001 => {     // EA = ,R + 16-bit offset
+                let base = self.indexed_reg_val(postbyte) as i16;
+                let offset = self.fetchw() as i16;
+                base.wrapping_add(offset) as u16
+            },
+            0b1011 => {     // EA = ,R + D offset
+                let base = self.indexed_reg_val(postbyte) as i16;
+                let offset = self.regs.d() as i16;
+                base.wrapping_add(offset) as u16
+            },
+            0b1100 => {     // EA = ,PC + 8-bit offset
+                self.pcrel8()
+            },
+            0b1101 => {     // EA = ,PC + 16-bit offset
+                self.pcrel16()
+            }
+            0b1111 => {     // EA = (, Address)
+                let x = self.fetchw();
+                self.mem.loadw(x)
+            },
+            _ => panic!("Unexpected indexed addressing mode"),
+        }
+    }
+
+    /// 8-bit PC-relative addressing.
+    fn pcrel8(&mut self) -> u16 {
+        let offset = self.fetchb() as i8 as i16;
+        let pc = self.regs.pc as i16;
+        pc.wrapping_add(offset) as u16
+    }
+
+    /// 16-bit PC-relative addressing.
+    fn pcrel16(&mut self) -> u16 {
+        let offset = self.fetchw() as i16;
+        let pc = self.regs.pc as i16;
+        pc.wrapping_add(offset) as u16
+    }
+}
+
+/////////////////////////////////////////////////////////////////////
+// Instruction Set
+
+impl <M: Mem> CPU<M> {
+    /// Clear the N, Z, V, and C flags.
+    fn clear_nzvc8(&mut self) {
+        self.regs.cc.remove(CC_N | CC_Z | CC_V | CC_C);
+    }
+
+    /// Set the negative and zero flags given an ALU result.
+    fn set_nz(&mut self, c: u8) {
+        self.regs.cc.set_if(CC_N, (c & 0x80) != 0);
+        self.regs.cc.set_if(CC_Z, c == 0);
+    }
+
+    /// Set the N, Z, V, and C flags from operands and result.
+    fn set_nzvc8(&mut self, a: u16, b: u16, c: u16) {
+        self.regs.cc.set_if(CC_C, (c & 0x100) != 0);
+        self.regs.cc.set_if(CC_V, ((a ^ b ^ c ^ (c >> 1)) & 0x80) != 0);
+        self.set_nz(c as u8);
+    }
+
+    /// Replaces the operand with its twos complement. The C (carry)
+    /// bit represents a borrow and is set to the inverse of the
+    /// resulting binary carry. Note that 0x80 is replaced by itself
+    /// and only in this case is the V (overflow) bit set. The value
+    /// 0x00 is also replaced by itself, and only in this case is the
+    /// C (carry) bit cleared.
+    ///
+    /// Condition Codes:
+    ///
+    ///   H - U ndefined.
+    ///   N - Set if the result is negative; cleared otherwise.
+    ///   Z - Set if the result is zero; cleared otherwise.
+    ///   V - Set if the original operand was 1 0000000.
+    ///   C - Set if a borrow is generated; cleared otherwise.
+    fn neg(&mut self, val: u8) -> u8 {
+        let a = 0u16;
+        let b = val as u16;
+        let c = a.wrapping_sub(b);
+
+        self.set_nzvc8(a, b, c);
+        c as u8
+    }
+
+    fn op_NEG(&mut self, ea: u16) {
+        let val = self.mem.loadb(ea);
+        let res = self.neg(val);
+        self.mem.storeb(ea, res);
+    }
+
+    fn op_NEGA(&mut self) {
+        let val = self.regs.a;
+        let res = self.neg(val);
+        self.regs.a = res;
+    }
+
+    fn op_NEGB(&mut self) {
+        let val = self.regs.b;
+        let res = self.neg(val);
+        self.regs.b = res;
+    }
+
+    /// Replaces the contents of memory location M or accumulator A or B
+    /// with its logical complement. When operating on unsigned values,
+    /// only BEQ and BNE branches can be expected to behave properly
+    /// following a COM instruction. When operating on twos complement
+    /// values, all signed branches are available.
+    ///
+    /// Condition Codes:
+    ///
+    ///   H - Not affected.
+    ///   N - Set if the result is negative; cleared otherwise.
+    ///   Z - Set if the result is zero; cleared otherwise.
+    ///   V - Always cleared.
+    ///   C - Always set.
+    fn com(&mut self, val: u8) -> u8 {
+        let res = !val;
+        self.set_nz(res);
+        self.regs.cc.remove(CC_V);
+        self.regs.cc.insert(CC_C);
+        res
+    }
+
+    fn op_COM(&mut self, ea: u16) {
+        let val = self.mem.loadb(ea);
+        let res = self.com(val);
+        self.mem.storeb(ea, res);
+    }
+
+    fn op_COMA(&mut self) {
+        let val = self.regs.a;
+        let res = self.com(val);
+        self.regs.a = res;
+    }
+
+    fn op_COMB(&mut self) {
+        let val = self.regs.b;
+        let res = self.com(val);
+        self.regs.b = res;
+    }
+
+    /// Shifts all bits of accumulator A or B or memory
+    /// location M one place to the left. Bit zero is
+    /// loaded with a zero. Bit seven of accumulator A or B or
+    /// memory location M is shifted into the C (carry) bit.
+    ///
+    /// Condition Codes:
+    ///
+    ///   H - Undefined.
+    ///   N - Set if the result is negative; cleared otherwise.
+    ///   Z - Set if the result is zero; cleared otherwise.
+    ///   V - Loaded with the result of the exclusive OR of
+    ///       bits six and seven of the original operand.
+    ///   C - Loaded with bit seven of the original operand.
+    fn lsl(&mut self, val: u8) -> u8 {
+        let res = val << 1;
+        self.set_nz(res);
+        self.regs.cc.set_if(CC_C, (val & 0x80) != 0);
+        self.regs.cc.set_if(CC_V, (val ^ (val << 1)) & 0x80 != 0);
+        res
+    }
+
+    fn op_LSL(&mut self, ea: u16) {
+        let val = self.mem.loadb(ea);
+        let res = self.lsl(val);
+        self.mem.storeb(ea, res);
+    }
+
+    fn op_LSLA(&mut self) {
+        let val = self.regs.a;
+        let res = self.lsl(val);
+        self.regs.a = res;
+    }
+
+    fn op_LSLB(&mut self) {
+        let val = self.regs.b;
+        let res = self.lsl(val);
+        self.regs.b = res;
+    }
+
+    /// Performs a logical shift right on the operand. Shifts a
+    /// zero into bit seven and bit zero into the C (carry) bit.
+    ///
+    /// Condition Codes:
+    ///
+    ///   H - Not affected.
+    ///   N - Always cleared.
+    ///   Z - Set if the result is zero; cleared otherwise.
+    ///   V - Not affected.
+    ///   C - Loaded with bit zero of the original operand.
+    fn lsr(&mut self, val: u8) -> u8 {
+        let res = val >> 1;
+        self.set_nz(res);
+        self.regs.cc.set_if(CC_C, (val & 0x01) != 0);
+        res
+    }
+
+    fn op_LSR(&mut self, ea: u16) {
+        let val = self.mem.loadb(ea);
+        let res = self.lsr(val);
+        self.mem.storeb(ea, res);
+    }
+
+    fn op_LSRA(&mut self) {
+        let val = self.regs.a;
+        let res = self.lsr(val);
+        self.regs.a = res;
+    }
+
+    fn op_LSRB(&mut self) {
+        let val = self.regs.b;
+        let res = self.lsr(val);
+        self.regs.b = res;
+    }
+
+    /// Shifts all bits of the operand one place to the
+    /// right. Bit seven is held constant. Bit zero is
+    /// shifted i nto the C (carry) bit.
+    ///
+    /// Condition Codes:
+    ///
+    ///   H - Undefined.
+    ///   N - Set if the result is negative; cleared otherwise.
+    ///   Z - Set if the result is zero; cleared otherwise.
+    ///   V - Not affected.
+    ///   C - Loaded with bit zero of the original operand.
+    fn asr(&mut self, val: u8) -> u8 {
+        let res = ((val as i8) >> 1) as u8;
+        self.set_nz(res);
+        self.regs.cc.set_if(CC_C, (val & 0x01) != 0);
+        res
+    }
+
+    fn op_ASR(&mut self, ea: u16) {
+        let val = self.mem.loadb(ea);
+        let res = self.asr(val);
+        self.mem.storeb(ea, res);
+    }
+
+    fn op_ASRA(&mut self) {
+        let val = self.regs.a;
+        let res = self.asr(val);
+        self.regs.a = res;
+    }
+
+    fn op_ASRB(&mut self) {
+        let val = self.regs.b;
+        let res = self.asr(val);
+        self.regs.b = res;
+    }
+
+    /// Rotates all bits of the operand one place right
+    /// through the C (carry) bit. This is a 9·bit rotation.
+    ///
+    /// Condition Codes:
+    ///
+    ///   H - Not affected.
+    ///   N - Set if the result is negative; cleared otherwise.
+    ///   Z - Set if the result is zero; cleared otherwise.
+    ///   V - Not affected.
+    ///   C - Loaded with bit zero of the previous operand.
+    fn ror(&mut self, val: u8) -> u8 {
+        let hi = if self.regs.cc.contains(CC_C) { 0x80 } else { 0x00 };
+        let res = (val >> 1) | hi;
+
+        self.set_nz(res);
+        self.regs.cc.set_if(CC_C, (val & 0x01) != 0);
+        res
+    }
+
+    fn op_ROR(&mut self, ea: u16) {
+        let val = self.mem.loadb(ea);
+        let res = self.ror(val);
+        self.mem.storeb(ea, res);
+    }
+
+    fn op_RORA(&mut self) {
+        let val = self.regs.a;
+        let res = self.ror(val);
+        self.regs.a = res;
+    }
+
+    fn op_RORB(&mut self) {
+        let val = self.regs.b;
+        let res = self.ror(val);
+        self.regs.b = res;
+    }
+
+    /// Rotates all bits of the operand one place left through the
+    /// C (carry) bit. This is a 9-bit rotation.
+    ///
+    /// Condition Codes:
+    ///
+    ///   H - Not affected.
+    ///   N - Set if the result is negative; cleared otherwise.
+    ///   Z - Set if the result is zero; cleared otherwise.
+    ///   V - Loaded with the result of the exclusive OR of bits six
+    ///       and seven of the original operand.
+    ///   C - Loaded with bit seven of the original operand.
+    fn rol(&mut self, val: u8) -> u8 {
+        let lo = if self.regs.cc.contains(CC_C) { 0x01 } else { 0x00 };
+        let res = (val << 1) | lo;
+
+        self.set_nz(res);
+        self.regs.cc.set_if(CC_C, (val & 0x80) != 0);
+        self.regs.cc.set_if(CC_V, (val ^ (val << 1)) & 0x80 != 0);
+        res
+    }
+
+    fn op_ROL(&mut self, ea: u16) {
+        let val = self.mem.loadb(ea);
+        let res = self.rol(val);
+        self.mem.storeb(ea, res);
+    }
+
+    fn op_ROLA(&mut self) {
+        let val = self.regs.a;
+        let res = self.rol(val);
+        self.regs.a = res;
+    }
+
+    fn op_ROLB(&mut self) {
+        let val = self.regs.b;
+        let res = self.rol(val);
+        self.regs.b = res;
+    }
+
+    /// Subtract one from the operand. The carry bit is not affected, thus
+    /// allowing this instruction to be used as a loop counter in multiple
+    /// precision computations. When operating on unsigned values, only
+    /// BEQ and BNE branches can be expected to behave consistently.
+    /// When operating on twos complement values, all signed branches
+    /// are available.
+    ///
+    /// Condition Codes:
+    ///
+    ///   H - Not affected.
+    ///   N - Set if the result is negative; cleared otherwise.
+    ///   Z - Set if the result is zero; cleared otherwise.
+    ///   V - Set if the original operand was 0b10000000; cleared otherwise.
+    ///   C - Not affected.
+    fn dec(&mut self, val: u8) -> u8 {
+        let res = val.wrapping_sub(1);
+
+        self.set_nz(res);
+        self.regs.cc.set_if(CC_V, val == 0b10000000);
+        res
+    }
+
+    fn op_DEC(&mut self, ea: u16) {
+        let val = self.mem.loadb(ea);
+        let res = self.dec(val);
+        self.mem.storeb(ea, res);
+    }
+
+    fn op_DECA(&mut self) {
+        let val = self.regs.a;
+        let res = self.dec(val);
+        self.regs.a = res;
+    }
+
+    fn op_DECB(&mut self) {
+        let val = self.regs.b;
+        let res = self.dec(val);
+        self.regs.b = res;
+    }
+
+    /// Adds to the operand. The carry bit is not affected, thus allowing this
+    /// instruction to be used as a loop counter in multiple-precision computations.
+    /// When operating on unsigned values, only the BEQ and
+    /// BNE branches can be expected to behave consistently. When
+    /// operating on twos complement values, all signed branches are correctly
+    /// available.
+    ///
+    /// Condition Codes:
+    ///
+    ///   H - Not affected.
+    ///   N - Set if the result is negative; cleared otherwise.
+    ///   Z - Set if the result is zero; cleared otherwise.
+    ///   V - Set if the original operand was 0b01111111; cleared otherwise.
+    ///   C - Not affected.
+    fn inc(&mut self, val: u8) -> u8 {
+        let res = val.wrapping_add(1);
+
+        self.set_nz(res);
+        self.regs.cc.set_if(CC_V, val == 0b01111111);
+        res
+    }
+
+    fn op_INC(&mut self, ea: u16) {
+        let val = self.mem.loadb(ea);
+        let res = self.inc(val);
+        self.mem.storeb(ea, res);
+    }
+
+    fn op_INCA(&mut self) {
+        let val = self.regs.a;
+        let res = self.inc(val);
+        self.regs.a = res;
+    }
+
+    fn op_INCB(&mut self) {
+        let val = self.regs.b;
+        let res = self.inc(val);
+        self.regs.b = res;
+    }
+
+    /// Set the N (negative) and Z (zero) bits according to the contents of
+    /// memory location M, and clear the V (overflow) bit. The TST instruction
+    /// provides only minimum information when testing unsigned
+    /// values; since no unsigned value is less than zero, BLO and BLS have
+    /// no utility. While BHI could be used after TST, it provides exactly the
+    /// same control as BNE, which is preferred. The signed branches are
+    /// available.
+    ///
+    /// Condition Codes:
+    ///
+    ///   H - Not affected.
+    ///   N - Set if the result is negative; cleared otherwise.
+    ///   Z - Set if the result is zero; cleared otherwise.
+    ///   V - Always cleared.
+    ///   C - Not affected.
+    fn tst(&mut self, val: u8) {
+        self.set_nz(val);
+        self.regs.cc.remove(CC_V);
+    }
+
+    fn op_TST(&mut self, ea: u16) {
+        let val = self.mem.loadb(ea);
+        self.tst(val);
+    }
+
+    fn op_TSTA(&mut self) {
+        let val = self.regs.a;
+        self.tst(val);
+    }
+
+    fn op_TSTB(&mut self) {
+        let val = self.regs.b;
+        self.tst(val);
+    }
+
+    /// Program control is transferred to the effective address.
+    ///
+    /// Condition Codes: Not affected.
+    fn op_JMP(&mut self, ea: u16) {
+        self.regs.pc = ea;
+    }
+
+    /// Accumulator A or B or memory location M is loaded with 00000000.
+    /// Note that the EA is read during this operation.
+    ///
+    /// Condition Codes:
+    ///
+    ///   H - Not affected.
+    ///   N - Always cleared.
+    ///   Z - Always set.
+    ///   V - Always cleared.
+    ///   C - Always cleared.
+    fn op_CLR(&mut self, ea: u16) {
+        let _ = self.mem.loadb(ea);
+        self.mem.storeb(ea, 0x00);
+        self.regs.cc.remove(CC_N | CC_V | CC_C);
+        self.regs.cc.insert(CC_Z);
+    }
+
+    fn op_CLRA(&mut self) {
+        self.regs.a = 0x00;
+        self.regs.cc.remove(CC_N | CC_V | CC_C);
+        self.regs.cc.insert(CC_Z);
+    }
+
+    fn op_CLRB(&mut self) {
+        self.regs.b = 0x00;
+        self.regs.cc.remove(CC_N | CC_V | CC_C);
+        self.regs.cc.insert(CC_Z);
+    }
+
+    /// This instruction causes the program counter to be incremented.
+    /// No other registers or memory locations are affected.
+    fn op_NOP(&mut self) {}
+
+    /// Synchronize to external event. Not implemented yet.
+    fn op_SYNC(&mut self) { unimplemented!(); }
+
+    /// Causes an unconditional branch given a 16-bit offset.
+    fn op_LBRA(&mut self, ea: u16) {
+        self.regs.pc = ea;
+    }
+
+    /// Causes an unconditional branch given an 8-bit offset.
+    fn op_BRA(&mut self, ea: u16) {
+        self.regs.pc = ea;
+    }
+
+    /// Branch never, equivalent to NOP.
+    fn op_BRN(&mut self, ea: u16) {}
+
+    /// Branch to `ea` if `flags` are clear.
+    fn branch_if_clear(&mut self, flags: CCFlags, ea: u16) {
+        let cc = self.regs.cc;
+        let val = cc & flags;
+        if val.is_empty() { self.regs.pc = ea; }
+    }
+
+    /// Branch to `ea` if `flags` are set.
+    fn branch_if_set(&mut self, flags: CCFlags, ea: u16) {
+        let cc = self.regs.cc;
+        let val = cc & flags;
+        if val == flags { self.regs.pc = ea; }
+    }
+
+    /// Causes a branch if the previous operation caused neither a carry nor
+    /// a zero result. When used after a subtract or compare operation on
+    /// unsigned binary val ues, this instruction will branch if the register
+    /// was higher than the memory operand.
+    fn op_BHI(&mut self, ea: u16) {
+        self.branch_if_clear(CC_C | CC_Z, ea);
+    }
+
+    /// Causes a branch if the previous operation caused either a carry or a
+    /// zero result. When used after a subtract or compare operation on unsigned
+    /// binary values, this instruction will branch if the register was
+    /// lower than or the same as the memory operand.
+    fn op_BLS(&mut self, ea: u16) {
+        self.branch_if_set(CC_C | CC_Z, ea);
+    }
+
+    /// Tests the state of the C (carry) bit and causes a branch if it is clear.
+    /// When used after a subtract or compare on unsigned binary values,
+    /// this instruction will branch if the register was higher than or the
+    /// same as the memory operand.
+    fn op_BHS(&mut self, ea: u16) {
+        self.branch_if_clear(CC_C, ea);
+    }
+
+    /// Tests the state of the C (carry) bit and causes a branch if it is set.
+    /// When used after a subtract or compare on unsigned binary values,
+    /// this instruction will branch if the register was lower than the
+    /// memory operand.
+    fn op_BLO(&mut self, ea: u16) {
+        self.branch_if_set(CC_C, ea);
+    }
+
+    /// Tests the state of the Z (zero) bit and causes a branch if it is clear.
+    /// When used after a subtract or compare operation on any binary
+    /// values, this instruction will branch if the register is, or would be, not
+    /// equal to the memory operand.
+    fn op_BNE(&mut self, ea: u16) {
+        self.branch_if_clear(CC_Z, ea);
+    }
+
+    /// Tests the state of the Z (zero) bit and causes a branch if it is set.
+    /// When used after a subtract or compare operation, this instruction
+    /// will branch if the compared values, signed or unsigned, were exactly
+    /// the same.
+    fn op_BEQ(&mut self, ea: u16) {
+        self.branch_if_set(CC_Z, ea);
+    }
+
+    /// Tests the state of the V (overflow) bit and causes a branch if it is
+    /// clear. That is, branch if the twos complement result was valid. When
+    /// used after an operation on twos complement binary values, this instruction
+    /// will branch if there was no overflow.
+    fn op_BVC(&mut self, ea: u16) {
+        self.branch_if_clear(CC_V, ea);
+    }
+
+    /// Tests the state of the V (overflow) bit and causes a branch if it is set.
+    /// That is, branch if the twos complement result was inval id. When used
+    /// after an operation on twos complement binary values, this instruction
+    /// will branch if there was an overflow.
+    fn op_BVS(&mut self, ea: u16) {
+        self.branch_if_set(CC_V, ea);
+    }
+
+    /// Tests the state of the N (negative) bit and causes a branch if it is
+    /// clear. That is, branch if the sign of the twos complement result is
+    /// positive.
+    fn op_BPL(&mut self, ea: u16) {
+        self.branch_if_clear(CC_N, ea);
+    }
+
+    /// Tests the state of the N (negative) bit and causes a branch if set.
+    /// That is, branch if the sign of the twos complement result is negative.
+    fn op_BMI(&mut self, ea: u16) {
+        self.branch_if_set(CC_N, ea);
+    }
+
+    /// Causes a branch if the N (negative) bit and the V (overflow) bit are
+    /// either both set or both clear. That is, branch if the sign of a valid
+    /// twos complement result is, or would be, positive. When used after a
+    /// subtract or compare operation on twos complement values, this instruction
+    /// will branch if the register was greater than or equal to the
+    /// memory operand.
+    fn op_BGE(&mut self, ea: u16) {
+        let cc = self.regs.cc;
+        let cc_n = (cc & CC_N) == CC_N;
+        let cc_v = (cc & CC_V) == CC_V;
+
+        if !(cc_n ^ cc_v) {
+            self.regs.pc = ea;
+        }
+    }
+
+    /// Causes a branch if either, but not both, of the N (negative) or V
+    /// (overflow) bits is set. That is, branch if the sign of a valid twos complement
+    /// result is, or would be, negative. When used after a subtract
+    /// or compare operation on twos complement binary values, this instruction
+    /// will branch if the register was less than the memory
+    /// operand.
+    fn op_BLT(&mut self, ea: u16) {
+        let cc = self.regs.cc;
+        let cc_n = (cc & CC_N) == CC_N;
+        let cc_v = (cc & CC_V) == CC_V;
+
+        if cc_n ^ cc_v {
+            self.regs.pc = ea;
+        }
+    }
+
+    /// Causes a branch if the N (negative) bit and V (overflow) bit are either
+    /// both set or both clear and the Z (zero) bit is clear. In other words,
+    /// branch if the sign of a valid twos complement result is, or would be,
+    /// positive and not zero. When used after a subtract or compare operation
+    /// on twos complement values, this instruction will branch if the
+    /// register was greater than the memory operand.
+    fn op_BGT(&mut self, ea: u16) {
+        let cc = self.regs.cc;
+        let cc_n = (cc & CC_N) == CC_N;
+        let cc_v = (cc & CC_V) == CC_V;
+        let cc_z = (cc & CC_Z) == CC_Z;
+
+        if !(cc_z & (cc_n ^ cc_v)) {
+            self.regs.pc = ea;
+        }
+    }
+
+    /// Causes a branch if the exclusive OR of the N (negative) and V
+    /// (overflow) bits is 1 or if the Z (zero) bit is set. That is, branch if the
+    /// sign of a valid twos complement result is, or would be, negative.
+    /// When used after a subtract or compare operation on twos complement
+    /// values, this instruction will branch if the register was less than
+    /// or equal to the memory operand.
+    fn op_BLE(&mut self, ea: u16) {
+        let cc = self.regs.cc;
+        let cc_n = (cc & CC_N) == CC_N;
+        let cc_v = (cc & CC_V) == CC_V;
+        let cc_z = (cc & CC_Z) == CC_Z;
+
+        if cc_z | (cc_n ^ cc_v) {
+            self.regs.pc = ea;
+        }
+    }
+
+    /// Performs an inclusive OR operation between the contents of the
+    /// condition code registers and the immediate value, and the result is
+    /// placed in the condition code register. This instruction may be used
+    /// to set interrupt masks (disable interrupts) or any other bit(s).
+    fn op_ORCC(&mut self, ea: u16) {
+        let val = self.mem.loadb(ea);
+        self.regs.cc |= CCFlags::from_bits_truncate(val);
+    }
+
+    /// Performs a logical AND between the condition code register and the
+    /// immediate byte specified in the instruction and places the result in
+    /// the condition code register.
+    fn op_ANDCC(&mut self, ea: u16) {
+        let val = self.mem.loadb(ea);
+        self.regs.cc &= CCFlags::from_bits_truncate(val);
+    }
+
+    // The program counter is pushed onto the stack. The program counter
+    // is then loaded with the sum of the program counter and the offset.
+    //
+    // TODO: Write a test for me!
+    fn op_BSR(&mut self, ea: u16) {
+        let pc = self.regs.pc;
+        self.pushw_s(pc);
+        self.regs.pc = ea;
+    }
+
+    // The program counter is pushed onto the stack. The program counter
+    // is then loaded with the sum of the program counter and the offset.
+    //
+    // TODO: Write a test for me!
+    fn op_LBSR(&mut self, ea: u16) {
+        let pc = self.regs.pc;
+        self.pushw_s(pc);
+        self.regs.pc = ea;
+    }
+
+    /// Program control is returned from the subroutine to the calling program.
+    /// The return address is pulled from the stack.
+    fn op_RTS(&mut self) {
+        let new_pc = self.popw_s();
+        self.regs.pc = new_pc;
+    }
+
+    fn op_DAA(&mut self) {}
+    fn op_SEX(&mut self) {}
+    fn op_EXG(&mut self) {}
+    fn op_TFR(&mut self) {}
+    fn op_LEAX(&mut self, ea: u16) {}
+    fn op_LEAY(&mut self, ea: u16) {}
+    fn op_LEAS(&mut self, ea: u16) {}
+    fn op_LEAU(&mut self, ea: u16) {}
+    fn op_PSHS(&mut self) {}
+    fn op_PULS(&mut self) {}
+    fn op_PSHU(&mut self) {}
+    fn op_PULU(&mut self) {}
+    fn op_ABX(&mut self) {}
+    fn op_RTI(&mut self) {}
+    fn op_CWAI(&mut self) {}
+    fn op_MUL(&mut self) {}
+    fn op_RESET(&mut self) {}
+    fn op_SWI(&mut self) {}
+    fn op_SUBA(&mut self, ea: u16) {}
+    fn op_CMPA(&mut self, ea: u16) {}
+    fn op_SBCA(&mut self, ea: u16) {}
+    fn op_SUBD(&mut self, ea: u16) {}
+    fn op_ANDA(&mut self, ea: u16) {}
+    fn op_BITA(&mut self, ea: u16) {}
+    fn op_LDA(&mut self, ea: u16) {}
+    fn op_EORA(&mut self, ea: u16) {}
+    fn op_ADCA(&mut self, ea: u16) {}
+    fn op_ORA(&mut self, ea: u16) {}
+    fn op_ADDA(&mut self, ea: u16) {}
+    fn op_CMPX(&mut self, ea: u16) {}
+    fn op_LDX(&mut self, ea: u16) {}
+    fn op_STA(&mut self, ea: u16) {}
+    fn op_JSR(&mut self, ea: u16) {}
+    fn op_STX(&mut self, ea: u16) {}
+    fn op_SUBB(&mut self, ea: u16) {}
+    fn op_CMPB(&mut self, ea: u16) {}
+    fn op_SBCB(&mut self, ea: u16) {}
+    fn op_ADDD(&mut self, ea: u16) {}
+    fn op_ANDB(&mut self, ea: u16) {}
+    fn op_BITB(&mut self, ea: u16) {}
+    fn op_LDB(&mut self, ea: u16) {}
+    fn op_EORB(&mut self, ea: u16) {}
+    fn op_ADCB(&mut self, ea: u16) {}
+    fn op_ORB(&mut self, ea: u16) {}
+    fn op_ADDB(&mut self, ea: u16) {}
+    fn op_LDD(&mut self, ea: u16) {}
+    fn op_LDU(&mut self, ea: u16) {}
+    fn op_STB(&mut self, ea: u16) {}
+    fn op_STD(&mut self, ea: u16) {}
+    fn op_STU(&mut self, ea: u16) {}
+
+    fn op_LBRN(&mut self, ea: u16) {}
+    fn op_LBHI(&mut self, ea: u16) {}
+    fn op_LBLS(&mut self, ea: u16) {}
+    fn op_LBHS(&mut self, ea: u16) {}
+    fn op_LBLO(&mut self, ea: u16) {}
+    fn op_LBNE(&mut self, ea: u16) {}
+    fn op_LBEQ(&mut self, ea: u16) {}
+    fn op_LBVC(&mut self, ea: u16) {}
+    fn op_LBVS(&mut self, ea: u16) {}
+    fn op_LBPL(&mut self, ea: u16) {}
+    fn op_LBMI(&mut self, ea: u16) {}
+    fn op_LBGE(&mut self, ea: u16) {}
+    fn op_LBLT(&mut self, ea: u16) {}
+    fn op_LBGT(&mut self, ea: u16) {}
+    fn op_LBLE(&mut self, ea: u16) {}
+    fn op_SWI2(&mut self) {}
+    fn op_CMPD(&mut self, ea: u16) {}
+    fn op_CMPY(&mut self, ea: u16) {}
+    fn op_LDY(&mut self, ea: u16) {}
+    fn op_STY(&mut self, ea: u16) {}
+    fn op_LDS(&mut self, ea: u16) {}
+    fn op_STS(&mut self, ea: u16) {}
+
+    fn op_SWI3(&mut self) {}
+    fn op_CMPU(&mut self, ea: u16) {}
+    fn op_CMPS(&mut self, ea: u16) {}
+
+    /// Handle an illegal CPU instruction.
+    fn illegal_instruction(&self, opcode: u8) {
+        panic!("Illegal instruction {:02X}", opcode);
+    }
+
+    fn execute(&mut self, opcode: u8) {
+        cpu_decode!(opcode, self);
+    }
+
+    pub fn step(&mut self) {
+        let pc = self.regs.pc;
+        let opcode = self.fetchb();
+        self.execute(opcode);
+    }
+
+    pub fn step_n(&mut self, n: usize) {
+        for _ in 0..n {
+            self.step();
+        }
+    }
+}
+
+/// Macro used to check flags after executing an instruction.
+macro_rules! assert_flags {
+    ($cpu:expr => $($flag:ident: $val:expr),*) => (
+        $(assert!($cpu.regs.cc.contains($flag) == $val);)*);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mem::{Mem,RAM};
+
+    // Fixture to create a test CPU.
+    fn test_cpu() -> CPU<RAM> {
+        CPU::new(RAM::new(0x10000))
+    }
+
+    // Test that negating 0x80 (the most negative byte) sets CC_V.
+    #[test]
+    fn nega_0x80() {
+        let mut cpu = test_cpu();
+
+        cpu.regs.a = 0x80;
+        cpu.op_NEGA();
+
+        assert_eq!(cpu.regs.a, 0x80);
+        assert_flags! { cpu =>
+            CC_N: true,
+            CC_Z: false,
+            CC_V: true,
+            CC_C: true
+        }
+    }
+
+    // Test that negating 0x00 clears CC_C.
+    #[test]
+    fn negb_0x00() {
+        let mut cpu = test_cpu();
+
+        cpu.regs.b = 0x00;
+        cpu.op_NEGB();
+
+        assert_eq!(cpu.regs.b, 0x00);
+        assert_flags! { cpu =>
+            CC_N: false,
+            CC_Z: true,
+            CC_V: false,
+            CC_C: false
+        }
+    }
+
+    // Test `NEGA` on `0x01` for value and flag setting.
+    #[test]
+    fn nega_0x01() {
+        let mut cpu = test_cpu();
+
+        cpu.regs.a = 0x01;
+        cpu.op_NEGA();
+
+        assert_eq!(cpu.regs.a, 0xFF);
+        assert_flags! { cpu =>
+            CC_N: true,
+            CC_Z: false,
+            CC_V: false,
+            CC_C: true
+        }
+
+        cpu.op_NEGA();
+
+        assert_eq!(cpu.regs.a, 0x01);
+        assert_flags! { cpu =>
+            CC_N: false,
+            CC_Z: false,
+            CC_V: false,
+            CC_C: true
+        }
+    }
+
+    // Test LSR and the indexed autoincrement addressing mode.
+    #[test]
+    fn lsr_indexed() {
+        let mut cpu = test_cpu();
+        const CODE_ADDR: u16 = 0x100;
+        const DATA_ADDR: u16 = 0x400;
+
+        cpu.mem.store(DATA_ADDR, &[1, 2, 3, 4]);
+        cpu.mem.store(CODE_ADDR, &[
+            0x64, 0x80,                 // lsr ,x+
+            0x64, 0x80,                 // lsr ,x+
+            0x64, 0x80,                 // lsr ,x+
+            0x64, 0x80,                 // lsr ,x+
+        ]);
+
+        cpu.regs.pc = CODE_ADDR;
+        cpu.regs.x  = DATA_ADDR;
+        cpu.step_n(4);
+
+        let mut res = [0; 4];
+        cpu.mem.load(DATA_ADDR, &mut res);
+
+        assert_eq!(res, [0, 1, 1, 2]);
+        assert_flags! { cpu =>
+            CC_N: false,
+            CC_Z: false,
+            CC_V: false,
+            CC_C: false
+        }
+    }
+
+    #[test]
+    fn asra() {
+        let mut cpu = test_cpu();
+
+        cpu.regs.a = -4i8 as u8;
+        cpu.op_ASRA();
+
+        assert_eq!(cpu.regs.a as i8, -2);
+        assert_flags! { cpu =>
+            CC_N: true,
+            CC_Z: false,
+            CC_C: false
+        }
+
+        cpu.op_ASRA();
+        cpu.op_ASRA();
+
+        assert_eq!(cpu.regs.a, 0xff);
+        assert_flags! { cpu =>
+            CC_N: true,
+            CC_Z: false,
+            CC_C: true
+        }
+    }
+
+    #[test]
+    fn lsla() {
+        let mut cpu = test_cpu();
+
+        cpu.regs.a = 0b11000000;
+        cpu.op_LSLA();
+
+        assert_eq!(cpu.regs.a, 0b10000000);
+        assert_flags! { cpu =>
+            CC_N: true,
+            CC_Z: false,
+            CC_V: false,
+            CC_C: true
+        }
+
+        cpu.op_LSLA();
+
+        assert_eq!(cpu.regs.a, 0x00);
+        assert_flags! { cpu =>
+            CC_N: false,
+            CC_Z: true,
+            CC_V: true,
+            CC_C: true
+        }
+
+        cpu.op_LSLA();
+
+        assert_eq!(cpu.regs.a, 0x00);
+        assert_flags! { cpu =>
+            CC_N: false,
+            CC_Z: true,
+            CC_V: false,
+            CC_C: false
+        }
+    }
+
+    // Test wrap-around and overflow behavior of `DEC`.
+    #[test]
+    fn dec_wrap() {
+        let mut cpu = test_cpu();
+
+        cpu.regs.a = 2;
+        cpu.op_DECA();
+
+        assert_eq!(cpu.regs.a, 1);
+        assert_flags! { cpu =>
+            CC_N: false,
+            CC_Z: false,
+            CC_V: false
+        }
+
+        cpu.op_DECA();
+
+        assert_eq!(cpu.regs.a, 0);
+        assert_flags! { cpu =>
+            CC_Z: true,
+            CC_N: false,
+            CC_V: false
+        }
+    }
+
+    // Test wrap-around and overflow behavior of `INC`.
+    #[test]
+    fn inc_wrap() {
+        let mut cpu = test_cpu();
+
+        cpu.regs.a = 0x7e;
+        cpu.op_INCA();
+
+        assert_eq!(cpu.regs.a, 0x7f);
+        assert_flags! { cpu =>
+            CC_N: false,
+            CC_Z: false,
+            CC_V: false
+        }
+
+        cpu.op_INCA();
+
+        assert_eq!(cpu.regs.a, 0x80);
+        assert_flags! { cpu =>
+            CC_Z: false,
+            CC_N: true,
+            CC_V: true
+        }
+    }
+
+    #[test]
+    fn tsta() {
+        let mut cpu = test_cpu();
+
+        cpu.regs.a = 0x00;
+        cpu.op_TSTA();
+
+        assert_flags! { cpu =>
+            CC_N: false,
+            CC_Z: true,
+            CC_V: false
+        }
+
+        cpu.regs.a = 0xFF;
+        cpu.op_TSTA();
+
+        assert_flags! { cpu =>
+            CC_N: true,
+            CC_Z: false,
+            CC_V: false
+        }
+    }
+
+    #[test]
+    fn clra() {
+        let mut cpu = test_cpu();
+
+        cpu.regs.a = 0x80;
+        cpu.op_CLRA();
+
+        assert_eq!(cpu.regs.a, 0x00);
+        assert_flags! { cpu =>
+            CC_N: false,
+            CC_Z: true,
+            CC_V: false,
+            CC_C: false
+        }
+    }
+
+    /////////////////////////////////////////////////////////////////
+    // Control Flow Instructions
+
+    #[test]
+    fn jmp() {
+        let mut cpu = test_cpu();
+
+        cpu.regs.pc = 0;
+        cpu.op_JMP(0x100);
+        assert_eq!(cpu.regs.pc, 0x100);
+    }
+
+    #[test]
+    fn bra() {
+        let mut cpu = test_cpu();
+        const CODE_ADDR: u16 = 0x100;
+
+        cpu.mem.store(CODE_ADDR, &[
+            0x12,               // top     nop
+            0x12,               //         nop
+            0x20, 0xfc          //         bra top
+        ]);
+
+        cpu.regs.pc = CODE_ADDR;
+        cpu.step_n(3);
+
+        assert_eq!(cpu.regs.pc, CODE_ADDR);
+    }
+
+    #[test]
+    fn lbra() {
+        let mut cpu = test_cpu();
+        const CODE_ADDR: u16 = 0x100;
+
+        cpu.mem.store(CODE_ADDR, &[
+            0x12,               // top     nop
+            0x12,               //         nop
+            0x16, 0xff, 0xfb    //         lbra top
+        ]);
+
+        cpu.regs.pc = CODE_ADDR;
+        cpu.step_n(3);
+
+        assert_eq!(cpu.regs.pc, CODE_ADDR);
+    }
+
+    #[test]
+    fn bhi() {
+        let mut cpu = test_cpu();
+
+        cpu.mem.store(0x100, &[         //              org $100
+            0x1c, 0xf0,                 // 0100         andcc #$f0
+            0x1a, 0x05,                 // 0102         orcc #$05
+            0x22, 0x1a,                 // 0104         bhi go
+            0x1c, 0xfb,                 // 0106         andcc #$fb      ; clear Z
+            0x22, 0x16,                 // 0108         bhi go
+            0x1c, 0xfe,                 // 010A         andcc #$fe      ; clear C
+            0x22, 0x12,                 // 010C         bhi go
+        ]);                             //              org $120
+                                        // 0120 go      ...
+
+        cpu.regs.pc = 0x100;
+
+        cpu.step_n(3);
+        cpu.dump_regs();
+        assert_eq!(cpu.regs.pc, 0x106);
+
+        cpu.step_n(2);
+        cpu.dump_regs();
+        assert_eq!(cpu.regs.pc, 0x10a);
+
+        cpu.step_n(2);
+        cpu.dump_regs();
+        assert_eq!(cpu.regs.pc, 0x120);
+    }
+
+    // Test calling and returning from (near) subroutine calls.
+    #[test]
+    fn bsr_rts() {
+        let mut cpu = test_cpu();
+
+        cpu.mem.store(0x100, &[         //              org $100
+            0x8d, 0x1E,                 // 0100         bsr go
+            0x12,                       // 0102         nop
+        ]);
+
+        cpu.mem.store(0x120, &[         //              org $120
+            0x39,                       // 0120 go      rts
+        ]);
+
+        cpu.regs.s  = 0x400;
+        cpu.regs.pc = 0x100;
+
+        cpu.step();
+        cpu.dump_regs();
+
+        assert_eq!(cpu.regs.s, 0x3fe);
+        assert_eq!(cpu.regs.pc, 0x120);
+        assert_eq!(cpu.mem.loadw(cpu.regs.s), 0x102);
+
+        cpu.step();
+        cpu.dump_regs();
+
+        assert_eq!(cpu.regs.s, 0x400);
+        assert_eq!(cpu.regs.pc, 0x102);
+    }
+}
