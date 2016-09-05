@@ -8,18 +8,26 @@
 // for details.
 //
 
+//! Types for error handling within the emulator.
+//!
+//! This module implements Rust's `error::Error` interface using
+//! a custom enumerated type `Error` to wrap all errors that can
+//! escape from the public interface of the emulator.
+
 use std::error;
 use std::fmt;
 use std::io;
 use std::num;
 use std::result;
 
+/// A failure result from an emulator function.
 #[derive(Debug)]
 pub enum Error {
     IO(io::Error),
     Parse(num::ParseIntError),
 }
 
+/// Custom result type returned by emulator functions.
 pub type Result<T> = result::Result<T, Error>;
 
 impl fmt::Display for Error {

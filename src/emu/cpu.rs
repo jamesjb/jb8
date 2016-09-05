@@ -8,6 +8,14 @@
 // for details.
 //
 
+//! A simple 6809 CPU core.
+//!
+//! ## Implementation Notes
+//!
+//! The 6809's many addressing modes are handled by methods
+//! such as `CPU::indexed` that fetch additional bytes and
+//! calculate the effective address of the memory operand.
+
 #![allow(dead_code)]
 #![allow(unused_variables)]
 #![allow(non_snake_case)]
@@ -16,6 +24,7 @@ use emu::mem::Mem;
 use std::fmt;
 
 bitflags!{
+    /// The 6809's 8-bit flags register.
     pub flags CCFlags: u8 {
         const CC_E = 0b10000000,
         const CC_F = 0b01000000,
@@ -29,6 +38,7 @@ bitflags!{
 }
 
 impl CCFlags {
+    /// Set one or more flags if a boolean condition is true.
     fn set_if(&mut self, val: Self, cond: bool) {
         if cond {
             self.insert(val);
@@ -101,12 +111,26 @@ impl Regs {
 /////////////////////////////////////////////////////////////////////
 // CPU Emulation
 
+/// The 6809 CPU core.
 pub struct CPU<M: Mem> {
     pub regs: Regs,
     pub mem: M,
 }
 
 impl <M: Mem> CPU<M> {
+    /// Create a new CPU given a memory interface.
+    ///
+    /// The memory interface will often be a custom board-specific
+    /// object that implements address decoding on top of RAM, devices,
+    /// etc.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use jb8::emu::{RAM, CPU};
+    ///
+    /// let mut cpu = CPU::new(RAM::new(0x10000));
+    /// ```
     pub fn new(mem: M) -> CPU<M> {
         CPU {
             regs: Regs::new(),
@@ -117,6 +141,25 @@ impl <M: Mem> CPU<M> {
     /// Dump registers to the standard output.
     pub fn dump_regs(&self) {
         self.regs.dump();
+    }
+
+    fn execute(&mut self, opcode: u8) {
+        cpu_decode!(opcode, self);
+    }
+
+    /// Execute the next instruction at the program counter.
+    pub fn step(&mut self) {
+        let pc = self.regs.pc;
+        let opcode = self.fetchb();
+        self.execute(opcode);
+    }
+
+    /// Execute the next `n` instructions starting at the
+    /// current value of the program counter.
+    pub fn step_n(&mut self, n: usize) {
+        for _ in 0..n {
+            self.step();
+        }
     }
 
     /// Read an 8-bit value from memory at `pc` then increment `pc` by 1.
@@ -1043,22 +1086,6 @@ impl <M: Mem> CPU<M> {
     /// Handle an illegal CPU instruction.
     fn illegal_instruction(&self, opcode: u8) {
         panic!("Illegal instruction {:02X}", opcode);
-    }
-
-    fn execute(&mut self, opcode: u8) {
-        cpu_decode!(opcode, self);
-    }
-
-    pub fn step(&mut self) {
-        let pc = self.regs.pc;
-        let opcode = self.fetchb();
-        self.execute(opcode);
-    }
-
-    pub fn step_n(&mut self, n: usize) {
-        for _ in 0..n {
-            self.step();
-        }
     }
 }
 
