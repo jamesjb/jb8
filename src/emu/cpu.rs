@@ -1692,4 +1692,40 @@ mod tests {
         cpu.op_SEX();
         assert_eq!(cpu.regs.a, 0x00);
     }
+
+    #[test]
+    fn leax() {
+        let mut cpu = test_cpu();
+
+        cpu.mem.store(0x100, &[         // org $100
+            0x8E, 0x12, 0x34,           // ldx #$1234
+            0x10, 0x8E, 0x43, 0x21,     // ldy #$4321
+            0x30, 0x80,                 // leax ,x+
+            0x30, 0x01,                 // leax 1,x
+            0x30, 0x89, 0x01, 0x00,     // leax 256,x
+            0x30, 0xA0,                 // leax ,y+
+            0x30, 0xA3,                 // leax ,--y
+        ]);
+
+        cpu.regs.pc = 0x100;
+        cpu.step_n(2);          // load registers
+        cpu.dump_regs();
+
+        cpu.step();
+        assert_eq!(cpu.regs.x, 0x1234);
+
+        cpu.step();
+        assert_eq!(cpu.regs.x, 0x1235);
+
+        cpu.step();
+        assert_eq!(cpu.regs.x, 0x1335);
+
+        cpu.step();
+        assert_eq!(cpu.regs.x, 0x4321);
+        assert_eq!(cpu.regs.y, 0x4322);
+
+        cpu.step();
+        assert_eq!(cpu.regs.x, 0x4320);
+        assert_eq!(cpu.regs.y, 0x4320);
+    }
 }
