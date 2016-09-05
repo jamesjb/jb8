@@ -1075,7 +1075,7 @@ impl <M: Mem> CPU<M> {
             0b1001 => self.regs.b,
             0b1010 => self.regs.cc.bits,
             0b1011 => self.regs.dp,
-            _      => panic!("Invalid EXG register: {:X}", postnibble)
+            _      => panic!("Invalid register: {:X}", postnibble)
         }
     }
 
@@ -1085,7 +1085,7 @@ impl <M: Mem> CPU<M> {
             0b1001 => { self.regs.b = val; },
             0b1010 => { self.regs.cc = CCFlags::from_bits_truncate(val); },
             0b1011 => { self.regs.dp = val; },
-            _      => panic!("Invalid EXG register: {:X}", postnibble)
+            _      => panic!("Invalid register: {:X}", postnibble)
         }
     }
 
