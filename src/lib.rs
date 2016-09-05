@@ -16,5 +16,4 @@ pub mod cpu_decode {
     include!(concat!(env!("OUT_DIR"), "/cpu_decode.rs"));
 }
 
-pub mod mem;
-pub mod cpu;
+pub mod emulator;

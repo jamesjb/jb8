@@ -12,7 +12,7 @@
 #![allow(unused_variables)]
 #![allow(non_snake_case)]
 
-use mem::Mem;
+use emulator::mem::Mem;
 use std::fmt;
 
 bitflags!{
@@ -939,8 +939,6 @@ impl <M: Mem> CPU<M> {
 
     // The program counter is pushed onto the stack. The program counter
     // is then loaded with the sum of the program counter and the offset.
-    //
-    // TODO: Write a test for me!
     fn op_BSR(&mut self, ea: u16) {
         let pc = self.regs.pc;
         self.pushw_s(pc);
@@ -1073,7 +1071,7 @@ macro_rules! assert_flags {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mem::{Mem,RAM};
+    use emulator::mem::{Mem,RAM};
 
     // Fixture to create a test CPU.
     fn test_cpu() -> CPU<RAM> {
