@@ -208,6 +208,32 @@ impl <M: Mem> CPU<M> {
         let lo = self.popb_s() as u16;
         (hi << 8) | lo
     }
+
+    /// Push a byte onto the user stack.
+    fn pushb_u(&mut self, val: u8) {
+        self.regs.u = self.regs.u.wrapping_sub(1);
+        self.mem.storeb(self.regs.u, val);
+    }
+
+    /// Pop a byte from the user stack.
+    fn popb_u(&mut self) -> u8 {
+        let val = self.mem.loadb(self.regs.u);
+        self.regs.u = self.regs.u.wrapping_add(1);
+        val
+    }
+
+    /// Push a word onto the user stack.
+    fn pushw_u(&mut self, val: u16) {
+        self.pushb_u(((val >> 0) & 0xff) as u8);
+        self.pushb_u(((val >> 8) & 0xff) as u8);
+    }
+
+    /// Pop a word from the user stack.
+    fn popw_u(&mut self) -> u16 {
+        let hi = self.popb_u() as u16;
+        let lo = self.popb_u() as u16;
+        (hi << 8) | lo
+    }
 }
 
 /////////////////////////////////////////////////////////////////////
@@ -1192,7 +1218,6 @@ impl <M: Mem> CPU<M> {
         }
     }
 
-    // TODO: Make sure post-increment works as documented.
     fn op_LEAX(&mut self, ea: u16) {
         self.regs.x = ea;
         self.regs.cc.set_if(CC_Z, ea == 0);
@@ -1261,10 +1286,73 @@ impl <M: Mem> CPU<M> {
         self.regs.s = res;
     }
 
-    fn op_PSHS(&mut self) {}
-    fn op_PULS(&mut self) {}
-    fn op_PSHU(&mut self) {}
-    fn op_PULU(&mut self) {}
+    /// All, some, or none of the processor registers are pushed onto the
+    /// hardware stack (with the exception of the hardware stack pointer
+    /// itself).
+    fn op_PSHS(&mut self) {
+        let postbyte = self.fetchb();
+        let regs = self.regs;
+        println!("op_PSHS: postbyte={:2X}", postbyte);
+
+        if postbyte & (1 << 7) != 0 { self.pushw_s(regs.pc);      }
+        if postbyte & (1 << 6) != 0 { self.pushw_s(regs.u);       }
+        if postbyte & (1 << 5) != 0 { self.pushw_s(regs.y);       }
+        if postbyte & (1 << 4) != 0 { self.pushw_s(regs.x);       }
+        if postbyte & (1 << 3) != 0 { self.pushb_s(regs.dp);      }
+        if postbyte & (1 << 2) != 0 { self.pushb_s(regs.b);       }
+        if postbyte & (1 << 1) != 0 { self.pushb_s(regs.a);       }
+        if postbyte & (1 << 0) != 0 { self.pushb_s(regs.cc.bits); }
+    }
+
+    /// All, some, or none of the processor registers are pulled from the
+    /// hardware stack (with the exception of the hardware stack pointer
+    /// itself).
+    fn op_PULS(&mut self) {
+        let postbyte = self.fetchb();
+        println!("op_PULS: postbyte={:2X}", postbyte);
+
+        if postbyte & (1 << 0) != 0 { self.regs.cc = CCFlags::from_bits_truncate(self.popb_s()); }
+        if postbyte & (1 << 1) != 0 { self.regs.a  = self.popb_s(); }
+        if postbyte & (1 << 2) != 0 { self.regs.b  = self.popb_s(); }
+        if postbyte & (1 << 3) != 0 { self.regs.dp = self.popb_s(); }
+        if postbyte & (1 << 4) != 0 { self.regs.x  = self.popw_s(); }
+        if postbyte & (1 << 5) != 0 { self.regs.y  = self.popw_s(); }
+        if postbyte & (1 << 6) != 0 { self.regs.u  = self.popw_s(); }
+        if postbyte & (1 << 7) != 0 { self.regs.pc = self.popw_s(); }
+    }
+
+    /// All, some, or none of the processor registers are pushed onto the
+    /// user stack (with the exception of the hardware stack pointer
+    /// itself).
+    fn op_PSHU(&mut self) {
+        let postbyte = self.fetchb();
+        let regs = self.regs;
+
+        if postbyte & (1 << 7) != 0 { self.pushw_u(regs.pc);      }
+        if postbyte & (1 << 6) != 0 { self.pushw_u(regs.s);       }
+        if postbyte & (1 << 5) != 0 { self.pushw_u(regs.y);       }
+        if postbyte & (1 << 4) != 0 { self.pushw_u(regs.x);       }
+        if postbyte & (1 << 3) != 0 { self.pushb_u(regs.dp);      }
+        if postbyte & (1 << 2) != 0 { self.pushb_u(regs.b);       }
+        if postbyte & (1 << 1) != 0 { self.pushb_u(regs.a);       }
+        if postbyte & (1 << 0) != 0 { self.pushb_u(regs.cc.bits); }
+    }
+
+    /// All, some, or none of the processor registers are pulled from the
+    /// user stack (with the exception of the user stack pointer
+    /// itself).
+    fn op_PULU(&mut self) {
+        let postbyte = self.fetchb();
+
+        if postbyte & (1 << 0) != 0 { self.regs.cc = CCFlags::from_bits_truncate(self.popb_u()); }
+        if postbyte & (1 << 1) != 0 { self.regs.a  = self.popb_u(); }
+        if postbyte & (1 << 2) != 0 { self.regs.b  = self.popb_u(); }
+        if postbyte & (1 << 3) != 0 { self.regs.dp = self.popb_u(); }
+        if postbyte & (1 << 4) != 0 { self.regs.x  = self.popw_u(); }
+        if postbyte & (1 << 5) != 0 { self.regs.y  = self.popw_u(); }
+        if postbyte & (1 << 6) != 0 { self.regs.s  = self.popw_u(); }
+        if postbyte & (1 << 7) != 0 { self.regs.pc = self.popw_u(); }
+    }
 
     fn op_ABX(&mut self) {}
     fn op_RTI(&mut self) {}

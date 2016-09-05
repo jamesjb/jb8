@@ -430,3 +430,57 @@ fn leax() {
     assert_eq!(cpu.regs.x, 0x4320);
     assert_eq!(cpu.regs.y, 0x4320);
 }
+
+#[test]
+fn test_push_pull_s() {
+    let mut cpu = test_cpu();
+
+    cpu.regs.a  = 0x12;
+    cpu.regs.b  = 0x34;
+    cpu.regs.x  = 0xCAFE;
+    cpu.regs.y  = 0xBABE;
+    cpu.regs.s  = 0x0400;
+    cpu.regs.u  = 0x0800;
+    cpu.regs.pc = 0x0100;
+    let orig_regs = cpu.regs;
+
+    cpu.mem.store(0x0100, &[        // org $100
+        0x34, 0xFF,                 // pshs pc, u, y, x, dp, b, a, cc
+        0x35, 0xFF,                 // puls pc, u, y, x, dp, b, a, cc
+    ]);
+
+    cpu.step();
+    cpu.dump_regs();
+
+    cpu.step();
+    cpu.regs.pc -= 2;               // account for PC fetch
+    cpu.dump_regs();
+    assert_eq!(orig_regs, cpu.regs);
+}
+
+#[test]
+fn test_push_pull_u() {
+    let mut cpu = test_cpu();
+
+    cpu.regs.a  = 0x12;
+    cpu.regs.b  = 0x34;
+    cpu.regs.x  = 0xCAFE;
+    cpu.regs.y  = 0xBABE;
+    cpu.regs.s  = 0x0400;
+    cpu.regs.u  = 0x0800;
+    cpu.regs.pc = 0x0100;
+    let orig_regs = cpu.regs;
+
+    cpu.mem.store(0x0100, &[        // org $100
+        0x36, 0xFF,                 // pshu pc, s, y, x, dp, b, a, cc
+        0x37, 0xFF,                 // pulu pc, s, y, x, dp, b, a, cc
+    ]);
+
+    cpu.step();
+    cpu.dump_regs();
+
+    cpu.step();
+    cpu.regs.pc -= 2;               // account for PC fetch
+    cpu.dump_regs();
+    assert_eq!(orig_regs, cpu.regs);
+}
