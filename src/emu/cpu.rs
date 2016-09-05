@@ -1292,7 +1292,6 @@ impl <M: Mem> CPU<M> {
     fn op_PSHS(&mut self) {
         let postbyte = self.fetchb();
         let regs = self.regs;
-        println!("op_PSHS: postbyte={:2X}", postbyte);
 
         if postbyte & (1 << 7) != 0 { self.pushw_s(regs.pc);      }
         if postbyte & (1 << 6) != 0 { self.pushw_s(regs.u);       }
@@ -1309,7 +1308,6 @@ impl <M: Mem> CPU<M> {
     /// itself).
     fn op_PULS(&mut self) {
         let postbyte = self.fetchb();
-        println!("op_PULS: postbyte={:2X}", postbyte);
 
         if postbyte & (1 << 0) != 0 { self.regs.cc = CCFlags::from_bits_truncate(self.popb_s()); }
         if postbyte & (1 << 1) != 0 { self.regs.a  = self.popb_s(); }

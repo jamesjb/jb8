@@ -432,7 +432,7 @@ fn leax() {
 }
 
 #[test]
-fn test_push_pull_s() {
+fn push_pull_s() {
     let mut cpu = test_cpu();
 
     cpu.regs.a  = 0x12;
@@ -459,7 +459,7 @@ fn test_push_pull_s() {
 }
 
 #[test]
-fn test_push_pull_u() {
+fn push_pull_u() {
     let mut cpu = test_cpu();
 
     cpu.regs.a  = 0x12;
