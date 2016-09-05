@@ -12,7 +12,7 @@
 #![allow(unused_variables)]
 #![allow(non_snake_case)]
 
-use emulator::mem::Mem;
+use emu::mem::Mem;
 use std::fmt;
 
 bitflags!{

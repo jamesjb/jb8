@@ -1,8 +1,8 @@
 
 extern crate jb8;
 
-use jb8::emulator::mem::{Mem,RAM};
-use jb8::emulator::cpu::CPU;
+use jb8::emu::mem::{Mem,RAM};
+use jb8::emu::cpu::CPU;
 
 fn main() {
     println!("JB-8 Emulator");
