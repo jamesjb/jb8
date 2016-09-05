@@ -6,3 +6,5 @@ build = "build.rs"
 
 [dependencies]
 bitflags = "0.7.0"
+ihex = "1.0.0"
+getopts = "0.2.14"

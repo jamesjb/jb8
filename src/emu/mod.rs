@@ -8,5 +8,10 @@
 // for details.
 //
 
+pub mod error;
 pub mod mem;
 pub mod cpu;
+
+pub use self::mem::{Mem, RAM};
+pub use self::cpu::CPU;
+pub use self::error::Result;

@@ -1071,7 +1071,7 @@ macro_rules! assert_flags {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use emulator::mem::{Mem,RAM};
+    use emu::mem::{Mem,RAM};
 
     // Fixture to create a test CPU.
     fn test_cpu() -> CPU<RAM> {
