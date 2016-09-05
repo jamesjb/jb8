@@ -63,6 +63,7 @@ impl fmt::Display for CCFlags {
 }
 
 /// The set of 6809 CPU registers.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct Regs {
     pub a: u8,
     pub b: u8,
