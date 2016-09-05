@@ -1154,6 +1154,8 @@ impl <M: Mem> CPU<M> {
         } else if postbyte & 0x88 == 0x00 {
             self.exg16(postbyte);
         } else {
+            // It looks like many other 6809 emulators allow mixed
+            // size exchanges. Let's see if this causes problems.
             panic!("Illegal EXG postbyte: {:X}", postbyte);
         }
     }
@@ -1183,6 +1185,8 @@ impl <M: Mem> CPU<M> {
         } else if postbyte & 0x88 == 0x00 {
             self.tfr16(postbyte);
         } else {
+            // It looks like many other 6809 emulators allow mixed
+            // size transfers. Let's see if this causes problems.
             panic!("Illegal TFR postbyte: {:X}", postbyte);
         }
     }
