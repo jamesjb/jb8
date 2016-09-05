@@ -1053,7 +1053,8 @@ impl <M: Mem> CPU<M> {
         let lsn = (self.regs.a >> 0) & 0x0f;
         let msn = (self.regs.a >> 4) & 0x0f;
         let cc_c = self.regs.cc.contains(CC_C);
-        let cf_lsn = if cc_c || lsn > 9 { 0x06 } else { 0x00 };
+        let cc_h = self.regs.cc.contains(CC_H);
+        let cf_lsn = if cc_h || lsn > 9 { 0x06 } else { 0x00 };
         let cf_msn = if cc_c || msn > 9 || (msn > 8 && lsn > 9) { 0x60 } else { 0x00 };
         let cf = cf_lsn | cf_msn;
         self.regs.a = self.regs.a.wrapping_add(cf);
