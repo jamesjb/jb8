@@ -1210,12 +1210,29 @@ impl <M: Mem> CPU<M> {
         self.regs.u = ea;
     }
 
+    fn ld8(&mut self, ea: u16) -> u8 {
+        let res = self.mem.loadb(ea);
+        self.set_nz(res);
+        self.regs.cc.remove(CC_V);
+        res
+    }
+
     fn ld16(&mut self, ea: u16) -> u16 {
         let res = self.mem.loadw(ea);
         self.regs.cc.set_if(CC_Z, res == 0);
         self.regs.cc.set_if(CC_N, res & 0x8000 != 0);
         self.regs.cc.remove(CC_V);
         res
+    }
+
+    fn op_LDA(&mut self, ea: u16) {
+        let res = self.ld8(ea);
+        self.regs.a = res;
+    }
+
+    fn op_LDB(&mut self, ea: u16) {
+        let res = self.ld8(ea);
+        self.regs.b = res;
     }
 
     fn op_LDX(&mut self, ea: u16) {
@@ -1260,7 +1277,6 @@ impl <M: Mem> CPU<M> {
     fn op_SUBD(&mut self, ea: u16) {}
     fn op_ANDA(&mut self, ea: u16) {}
     fn op_BITA(&mut self, ea: u16) {}
-    fn op_LDA(&mut self, ea: u16) {}
     fn op_EORA(&mut self, ea: u16) {}
     fn op_ADCA(&mut self, ea: u16) {}
     fn op_ORA(&mut self, ea: u16) {}
@@ -1275,7 +1291,6 @@ impl <M: Mem> CPU<M> {
     fn op_ADDD(&mut self, ea: u16) {}
     fn op_ANDB(&mut self, ea: u16) {}
     fn op_BITB(&mut self, ea: u16) {}
-    fn op_LDB(&mut self, ea: u16) {}
     fn op_EORB(&mut self, ea: u16) {}
     fn op_ADCB(&mut self, ea: u16) {}
     fn op_ORB(&mut self, ea: u16) {}
@@ -1691,6 +1706,23 @@ mod tests {
         cpu.regs.b = 0x10;
         cpu.op_SEX();
         assert_eq!(cpu.regs.a, 0x00);
+    }
+
+    #[test]
+    fn ld8() {
+        let mut cpu = test_cpu();
+
+        cpu.mem.store(0x100, &[         // org $100
+            0x86, 0x12,                 // lda #$12
+            0xC6, 0x34,                 // ldb #$34
+        ]);
+
+        cpu.regs.pc = 0x100;
+        cpu.step_n(2);
+        cpu.dump_regs();
+
+        assert_eq!(cpu.regs.a, 0x12);
+        assert_eq!(cpu.regs.b, 0x34);
     }
 
     #[test]
