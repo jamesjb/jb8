@@ -36,7 +36,7 @@ pub trait Mem {
     fn store(&mut self, mut addr: u16, bytes: &[u8]) {
         for x in bytes.iter() {
             self.storeb(addr, *x);
-            addr += 1;
+            addr = addr.wrapping_add(1);
         }
     }
 
@@ -44,7 +44,7 @@ pub trait Mem {
     fn load(&mut self, mut addr: u16, bytes: &mut [u8]) {
         for x in bytes.iter_mut() {
             *x = self.loadb(addr);
-            addr += 1;
+            addr = addr.wrapping_add(1);
         }
     }
 }
