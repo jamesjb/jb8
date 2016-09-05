@@ -9,12 +9,9 @@
 //
 
 extern crate getopts;
-extern crate ihex;
 extern crate jb8;
 
 use std::env;
-use std::fs::File;
-use std::io::Read;
 use std::process::exit;
 
 use getopts::Options;
@@ -26,31 +23,6 @@ use jb8::emu::Result;
 fn print_usage(opts: Options) {
     let brief = format!("Usage: jb8emu [OPTIONS...] FILE...");
     print!("{}", opts.usage(&brief));
-}
-
-// TODO: This will probably move into a library function.
-fn load_ihex_file<M: Mem>(filename: &str, mem: &mut M) -> Result<()> {
-    use ihex::reader::Reader;
-    use ihex::record::Record::{Data,EndOfFile};
-
-    let mut f = try!(File::open(filename));
-    let mut buf = String::new();
-
-    try!(f.read_to_string(&mut buf));
-    let ihex = Reader::new(&buf);
-
-    for rec in ihex {
-        match rec {
-            Ok(Data { offset, value }) => {
-                mem.store(offset, &value);
-            },
-            Ok(EndOfFile) => break,
-            Err(err) => panic!(err.to_string()),
-            _ => unimplemented!(),
-        }
-    }
-
-    Ok(())
 }
 
 /// Parse and validate command line options, returning the `Matches`
@@ -96,7 +68,7 @@ fn run() -> Result<()> {
 
     let mut ram = RAM::new(0x10000);
     for infile in matches.free.iter() {
-        try!(load_ihex_file(infile, &mut ram));
+        try!(ram.load_ihex_file(infile));
     }
 
     let entry =

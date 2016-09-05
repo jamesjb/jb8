@@ -10,6 +10,7 @@
 
 #[macro_use]
 extern crate bitflags;
+extern crate ihex;
 
 #[macro_use]
 pub mod cpu_decode {

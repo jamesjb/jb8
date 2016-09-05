@@ -10,6 +10,11 @@
 
 #![allow(dead_code)]
 
+use std::fs::File;
+use std::io::Read;
+
+use emu::error::Result;
+
 /// Operations on memory.
 pub trait Mem {
     /// Load a byte from `addr` and return it.
@@ -46,6 +51,30 @@ pub trait Mem {
             *x = self.loadb(addr);
             addr = addr.wrapping_add(1);
         }
+    }
+
+    fn load_ihex_file(&mut self, filename: &str) -> Result<()> {
+        use ihex::reader::Reader;
+        use ihex::record::Record::{Data,EndOfFile};
+
+        let mut f = try!(File::open(filename));
+        let mut buf = String::new();
+
+        try!(f.read_to_string(&mut buf));
+        let ihex = Reader::new(&buf);
+
+        for rec in ihex {
+            match rec {
+                Ok(Data { offset, value }) => {
+                    self.store(offset, &value);
+                },
+                Ok(EndOfFile) => break,
+                Err(err) => panic!(err.to_string()),
+                _ => unimplemented!(),
+            }
+        }
+
+        Ok(())
     }
 }
 
