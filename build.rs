@@ -76,7 +76,7 @@ fn make_decoder(name: &str, spec_file: &str, out_file: &mut File, nest: usize) {
                        x.to_lowercase(), insn.name).unwrap();
             },
             "VARIANT" => {
-                write!(out_file, "{}_decode!($op, $this);", insn.name.to_lowercase()).unwrap();
+                write!(out_file, "let subop = $this.fetchb(); {}_decode!(subop, $this);", insn.name.to_lowercase()).unwrap();
             },
             x => {
                 write!(out_file, "/* {} */", x).unwrap();
