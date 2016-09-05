@@ -1210,10 +1210,44 @@ impl <M: Mem> CPU<M> {
         self.regs.u = ea;
     }
 
+    fn ld16(&mut self, ea: u16) -> u16 {
+        let res = self.mem.loadw(ea);
+        self.regs.cc.set_if(CC_Z, res == 0);
+        self.regs.cc.set_if(CC_N, res & 0x8000 != 0);
+        self.regs.cc.remove(CC_V);
+        res
+    }
+
+    fn op_LDX(&mut self, ea: u16) {
+        let res = self.ld16(ea);
+        self.regs.x = res;
+    }
+
+    fn op_LDY(&mut self, ea: u16) {
+        let res = self.ld16(ea);
+        self.regs.y = res;
+    }
+
+    fn op_LDD(&mut self, ea: u16) {
+        let res = self.ld16(ea);
+        self.regs.set_d(res);
+    }
+
+    fn op_LDU(&mut self, ea: u16) {
+        let res = self.ld16(ea);
+        self.regs.u = res;
+    }
+
+    fn op_LDS(&mut self, ea: u16) {
+        let res = self.ld16(ea);
+        self.regs.s = res;
+    }
+
     fn op_PSHS(&mut self) {}
     fn op_PULS(&mut self) {}
     fn op_PSHU(&mut self) {}
     fn op_PULU(&mut self) {}
+
     fn op_ABX(&mut self) {}
     fn op_RTI(&mut self) {}
     fn op_CWAI(&mut self) {}
@@ -1232,7 +1266,6 @@ impl <M: Mem> CPU<M> {
     fn op_ORA(&mut self, ea: u16) {}
     fn op_ADDA(&mut self, ea: u16) {}
     fn op_CMPX(&mut self, ea: u16) {}
-    fn op_LDX(&mut self, ea: u16) {}
     fn op_STA(&mut self, ea: u16) {}
     fn op_JSR(&mut self, ea: u16) {}
     fn op_STX(&mut self, ea: u16) {}
@@ -1247,8 +1280,6 @@ impl <M: Mem> CPU<M> {
     fn op_ADCB(&mut self, ea: u16) {}
     fn op_ORB(&mut self, ea: u16) {}
     fn op_ADDB(&mut self, ea: u16) {}
-    fn op_LDD(&mut self, ea: u16) {}
-    fn op_LDU(&mut self, ea: u16) {}
     fn op_STB(&mut self, ea: u16) {}
     fn op_STD(&mut self, ea: u16) {}
     fn op_STU(&mut self, ea: u16) {}
@@ -1271,9 +1302,7 @@ impl <M: Mem> CPU<M> {
     fn op_SWI2(&mut self) {}
     fn op_CMPD(&mut self, ea: u16) {}
     fn op_CMPY(&mut self, ea: u16) {}
-    fn op_LDY(&mut self, ea: u16) {}
     fn op_STY(&mut self, ea: u16) {}
-    fn op_LDS(&mut self, ea: u16) {}
     fn op_STS(&mut self, ea: u16) {}
 
     fn op_SWI3(&mut self) {}
