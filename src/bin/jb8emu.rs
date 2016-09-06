@@ -31,7 +31,8 @@ fn parse_options() -> getopts::Matches {
     let args: Vec<String> = env::args().collect();
     let mut opts = Options::new();
 
-    opts.optopt("e", "entry", "entry point address (default: reset vector at FFFE)", "HEXADDR");
+    opts.optopt("e", "entry", "entry point address (default: reset vector at FFFE)", "ADDR");
+    opts.optopt("u", "until", "run until this PC", "ADDR");
     opts.optflag("", "help", "display this help and exit");
     opts.optflag("", "version", "output version information and exit");
 
@@ -79,9 +80,22 @@ fn run() -> Result<()> {
             ram.loadw(0xfffe)
         };
 
+    let run_until: Option<u16> =
+        if matches.opt_present("u") {
+            let arg = matches.opt_str("u").unwrap();
+            Some(try!(u16::from_str_radix(&arg, 16)))
+        } else {
+            None
+        };
+
     let mut cpu = CPU::new(ram);
     cpu.regs.pc = entry;
-    cpu.step_n(100);
+
+    match run_until {
+        Some(addr) => cpu.run_until(addr),
+        None       => cpu.step_n(20),
+    }
+
     Ok(())
 }
 

@@ -181,6 +181,13 @@ impl <M: Mem> CPU<M> {
         }
     }
 
+    /// Run the CPU until the PC equals `addr`.
+    pub fn run_until(&mut self, pc_stop: u16) {
+        while self.regs.pc != pc_stop {
+            self.step();
+        }
+    }
+
     /// Read an 8-bit value from memory at `pc` then increment `pc` by 1.
     fn fetchb(&mut self) -> u8 {
         let val = self.mem.loadb(self.regs.pc);
