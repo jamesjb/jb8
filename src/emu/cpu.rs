@@ -123,6 +123,7 @@ pub struct CPU<M: Mem> {
     pub regs: Regs,
     pub mem: M,
     fetched: Vec<u8>,           // bytes fetched during op cycle
+    running: bool,
 }
 
 impl <M: Mem> CPU<M> {
@@ -144,6 +145,7 @@ impl <M: Mem> CPU<M> {
             regs: Regs::new(),
             mem: mem,
             fetched: Vec::new(),
+            running: false,
         }
     }
 
@@ -183,7 +185,16 @@ impl <M: Mem> CPU<M> {
 
     /// Run the CPU until the PC equals `addr`.
     pub fn run_until(&mut self, pc_stop: u16) {
+        self.running = true;
         while self.regs.pc != pc_stop {
+            self.step();
+        }
+    }
+
+    /// Run the CPU until externally stopped.
+    pub fn run(&mut self) {
+        self.running = true;
+        while self.running {
             self.step();
         }
     }
