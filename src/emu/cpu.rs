@@ -345,6 +345,7 @@ impl <M: Mem> CPU<M> {
 
         // Otherwise, look up the mode based on the lower 4 bits:
         let ixmode = postbyte & 0x0f;
+        let indirect = postbyte & 0x10 != 0;
 
         match ixmode {
             0b0000 => {     // ,R+
@@ -355,7 +356,7 @@ impl <M: Mem> CPU<M> {
             0b0001 => {     // ,R++
                 let addr = self.indexed_reg_val(postbyte);
                 self.indexed_reg_inc(postbyte, 2);
-                addr
+                if indirect { self.mem.loadw(addr) } else { addr }
             },
             0b0010 => {     // ,-R
                 self.indexed_reg_inc(postbyte, -1);
@@ -363,47 +364,56 @@ impl <M: Mem> CPU<M> {
             },
             0b0011 => {     // ,--R
                 self.indexed_reg_inc(postbyte, -2);
-                self.indexed_reg_val(postbyte)
+                let addr = self.indexed_reg_val(postbyte);
+                if indirect { self.mem.loadw(addr) } else { addr }
             },
             0b0100 => {     // EA = ,R + 0 offset
-                self.indexed_reg_val(postbyte)
+                let addr = self.indexed_reg_val(postbyte);
+                if indirect { self.mem.loadw(addr) } else { addr }
             },
             0b0101 => {     // EA = ,R + B
                 let base = self.indexed_reg_val(postbyte) as i16;
                 let offset = (self.regs.b as i8) as i16;
-                base.wrapping_add(offset) as u16
+                let addr = base.wrapping_add(offset) as u16;
+                if indirect { self.mem.loadw(addr) } else { addr }
             },
             0b0110 => {     // EA = ,R + A
                 let base = self.indexed_reg_val(postbyte) as i16;
                 let offset = (self.regs.a as i8) as i16;
-                base.wrapping_add(offset) as u16
+                let addr = base.wrapping_add(offset) as u16;
+                if indirect { self.mem.loadw(addr) } else { addr }
             },
             0b1000 => {     // EA = ,R + 8-bit offset
                 let base = self.indexed_reg_val(postbyte) as i16;
                 let offset = self.fetchb() as i16;
-                base.wrapping_add(offset) as u16
+                let addr = base.wrapping_add(offset) as u16;
+                if indirect { self.mem.loadw(addr) } else { addr }
             }
             0b1001 => {     // EA = ,R + 16-bit offset
                 let base = self.indexed_reg_val(postbyte) as i16;
                 let offset = self.fetchw() as i16;
-                base.wrapping_add(offset) as u16
+                let addr = base.wrapping_add(offset) as u16;
+                if indirect { self.mem.loadw(addr) } else { addr }
             },
             0b1011 => {     // EA = ,R + D offset
                 let base = self.indexed_reg_val(postbyte) as i16;
                 let offset = self.regs.d() as i16;
-                base.wrapping_add(offset) as u16
+                let addr = base.wrapping_add(offset) as u16;
+                if indirect { self.mem.loadw(addr) } else { addr }
             },
             0b1100 => {     // EA = ,PC + 8-bit offset
-                self.pcrel8()
+                let addr = self.pcrel8();
+                if indirect { self.mem.loadw(addr) } else { addr }
             },
             0b1101 => {     // EA = ,PC + 16-bit offset
-                self.pcrel16()
+                let addr = self.pcrel16();
+                if indirect { self.mem.loadw(addr) } else { addr }
             }
             0b1111 => {     // EA = (, Address)
                 let x = self.fetchw();
                 self.mem.loadw(x)
             },
-            _ => panic!("Unexpected indexed addressing mode"),
+            _ => panic!("Unexpected indexed addressing mode at PC {:04X} (postbyte {:02X})", self.regs.pc, postbyte),
         }
     }
 
