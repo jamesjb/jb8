@@ -677,3 +677,38 @@ fn swi() {
     assert_eq!(cpu.regs.x, 0xCAFE);
     assert_eq!(cpu.regs.y, 0xBABE);
 }
+
+// Test returning a value from a register in an SWI handler.
+#[test]
+fn swi_reg_return() {
+    let mut cpu = test_cpu();
+
+    // Our OS lives at 0xE000 and handles the SWI vector.
+    // When a software interrupt occurs, it writes:
+    //
+    //   $CAFE to register X
+    //   $BABE to register Y
+    cpu.mem.store(0xE000, &[    //      org $E000
+        0x8E, 0xCA, 0xFE,       //      ldx #$CAFE
+        0xAF, 0x64,             //      stx 4,s
+        0x10, 0x8E, 0xBA, 0xBE, //      ldy #$BABE
+        0x10, 0xAF, 0x66,       //      sty 6,s
+        0x3B,                   //      rti
+    ]);
+
+    // Test code lives at 0x0100.
+    cpu.mem.store(0x0100, &[    //      org $100
+        0x3F,                   //      swi
+    ]);
+
+    // Store the address of the SWI handler at the vector.
+    cpu.mem.storew(0xFFFA, 0xE000);
+
+    cpu.regs.s = 0x0400;
+    cpu.regs.pc = 0x0100;
+    cpu.step_n(6);
+    cpu.dump_regs();
+
+    assert_eq!(cpu.regs.x, 0xCAFE);
+    assert_eq!(cpu.regs.y, 0xBABE);
+}
