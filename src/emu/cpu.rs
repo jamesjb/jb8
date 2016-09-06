@@ -431,9 +431,21 @@ impl <M: Mem> CPU<M> {
         self.regs.cc.remove(CC_N | CC_Z | CC_V | CC_C);
     }
 
-    /// Set the negative and zero flags given an ALU result.
-    fn set_nz(&mut self, c: u8) {
+    /// Set the H flag from operands and result.
+    fn set_h(&mut self, a: u16, b: u16, c: u16) {
+        let x = ((a ^ b ^ c) & 0x10) >> 3;
+        self.regs.cc.set_if(CC_H, x != 0);
+    }
+
+    /// Set the negative and zero flags given an 8-bit result.
+    fn set_nz8(&mut self, c: u8) {
         self.regs.cc.set_if(CC_N, (c & 0x80) != 0);
+        self.regs.cc.set_if(CC_Z, c == 0);
+    }
+
+    /// Set the negative and zero flags given a 16-bit result.
+    fn set_nz16(&mut self, c: u16) {
+        self.regs.cc.set_if(CC_N, (c & 0x8000) != 0);
         self.regs.cc.set_if(CC_Z, c == 0);
     }
 
@@ -441,48 +453,14 @@ impl <M: Mem> CPU<M> {
     fn set_nzvc8(&mut self, a: u16, b: u16, c: u16) {
         self.regs.cc.set_if(CC_C, (c & 0x100) != 0);
         self.regs.cc.set_if(CC_V, ((a ^ b ^ c ^ (c >> 1)) & 0x80) != 0);
-        self.set_nz(c as u8);
+        self.set_nz8(c as u8);
     }
 
-    /// Replaces the operand with its twos complement. The C (carry)
-    /// bit represents a borrow and is set to the inverse of the
-    /// resulting binary carry. Note that 0x80 is replaced by itself
-    /// and only in this case is the V (overflow) bit set. The value
-    /// 0x00 is also replaced by itself, and only in this case is the
-    /// C (carry) bit cleared.
-    ///
-    /// Condition Codes:
-    ///
-    ///   H - U ndefined.
-    ///   N - Set if the result is negative; cleared otherwise.
-    ///   Z - Set if the result is zero; cleared otherwise.
-    ///   V - Set if the original operand was 1 0000000.
-    ///   C - Set if a borrow is generated; cleared otherwise.
-    fn neg(&mut self, val: u8) -> u8 {
-        let a = 0u16;
-        let b = val as u16;
-        let c = a.wrapping_sub(b);
-
-        self.set_nzvc8(a, b, c);
-        c as u8
-    }
-
-    fn op_NEG(&mut self, ea: u16) {
-        let val = self.mem.loadb(ea);
-        let res = self.neg(val);
-        self.mem.storeb(ea, res);
-    }
-
-    fn op_NEGA(&mut self) {
-        let val = self.regs.a;
-        let res = self.neg(val);
-        self.regs.a = res;
-    }
-
-    fn op_NEGB(&mut self) {
-        let val = self.regs.b;
-        let res = self.neg(val);
-        self.regs.b = res;
+    /// Set the N, Z, V, and C flags from operands and result.
+    fn set_nzvc16(&mut self, a: u32, b: u32, c: u32) {
+        self.regs.cc.set_if(CC_C, (c & 0x10000) != 0);
+        self.regs.cc.set_if(CC_V, ((a ^ b ^ c ^ (c >> 1)) & 0x8000) != 0);
+        self.set_nz16(c as u16);
     }
 
     /// Replaces the contents of memory location M or accumulator A or B
@@ -500,7 +478,7 @@ impl <M: Mem> CPU<M> {
     ///   C - Always set.
     fn com(&mut self, val: u8) -> u8 {
         let res = !val;
-        self.set_nz(res);
+        self.set_nz8(res);
         self.regs.cc.remove(CC_V);
         self.regs.cc.insert(CC_C);
         res
@@ -539,7 +517,7 @@ impl <M: Mem> CPU<M> {
     ///   C - Loaded with bit seven of the original operand.
     fn lsl(&mut self, val: u8) -> u8 {
         let res = val << 1;
-        self.set_nz(res);
+        self.set_nz8(res);
         self.regs.cc.set_if(CC_C, (val & 0x80) != 0);
         self.regs.cc.set_if(CC_V, (val ^ (val << 1)) & 0x80 != 0);
         res
@@ -575,7 +553,7 @@ impl <M: Mem> CPU<M> {
     ///   C - Loaded with bit zero of the original operand.
     fn lsr(&mut self, val: u8) -> u8 {
         let res = val >> 1;
-        self.set_nz(res);
+        self.set_nz8(res);
         self.regs.cc.set_if(CC_C, (val & 0x01) != 0);
         res
     }
@@ -611,7 +589,7 @@ impl <M: Mem> CPU<M> {
     ///   C - Loaded with bit zero of the original operand.
     fn asr(&mut self, val: u8) -> u8 {
         let res = ((val as i8) >> 1) as u8;
-        self.set_nz(res);
+        self.set_nz8(res);
         self.regs.cc.set_if(CC_C, (val & 0x01) != 0);
         res
     }
@@ -648,7 +626,7 @@ impl <M: Mem> CPU<M> {
         let hi = if self.regs.cc.contains(CC_C) { 0x80 } else { 0x00 };
         let res = (val >> 1) | hi;
 
-        self.set_nz(res);
+        self.set_nz8(res);
         self.regs.cc.set_if(CC_C, (val & 0x01) != 0);
         res
     }
@@ -686,7 +664,7 @@ impl <M: Mem> CPU<M> {
         let lo = if self.regs.cc.contains(CC_C) { 0x01 } else { 0x00 };
         let res = (val << 1) | lo;
 
-        self.set_nz(res);
+        self.set_nz8(res);
         self.regs.cc.set_if(CC_C, (val & 0x80) != 0);
         self.regs.cc.set_if(CC_V, (val ^ (val << 1)) & 0x80 != 0);
         res
@@ -727,7 +705,7 @@ impl <M: Mem> CPU<M> {
     fn dec(&mut self, val: u8) -> u8 {
         let res = val.wrapping_sub(1);
 
-        self.set_nz(res);
+        self.set_nz8(res);
         self.regs.cc.set_if(CC_V, val == 0b10000000);
         res
     }
@@ -767,7 +745,7 @@ impl <M: Mem> CPU<M> {
     fn inc(&mut self, val: u8) -> u8 {
         let res = val.wrapping_add(1);
 
-        self.set_nz(res);
+        self.set_nz8(res);
         self.regs.cc.set_if(CC_V, val == 0b01111111);
         res
     }
@@ -806,7 +784,7 @@ impl <M: Mem> CPU<M> {
     ///   V - Always cleared.
     ///   C - Not affected.
     fn tst(&mut self, val: u8) {
-        self.set_nz(val);
+        self.set_nz8(val);
         self.regs.cc.remove(CC_V);
     }
 
@@ -1038,6 +1016,66 @@ impl <M: Mem> CPU<M> {
         }
     }
 
+    fn op_LBRN(&mut self, ea: u16) {
+        self.op_BRN(ea);
+    }
+
+    fn op_LBHI(&mut self, ea: u16) {
+        self.op_BHI(ea);
+    }
+
+    fn op_LBLS(&mut self, ea: u16) {
+        self.op_BLS(ea);
+    }
+
+    fn op_LBHS(&mut self, ea: u16) {
+        self.op_BHS(ea);
+    }
+
+    fn op_LBLO(&mut self, ea: u16) {
+        self.op_BLO(ea);
+    }
+
+    fn op_LBNE(&mut self, ea: u16) {
+        self.op_BNE(ea);
+    }
+
+    fn op_LBEQ(&mut self, ea: u16) {
+        self.op_BEQ(ea);
+    }
+
+    fn op_LBVC(&mut self, ea: u16) {
+        self.op_BVC(ea);
+    }
+
+    fn op_LBVS(&mut self, ea: u16) {
+        self.op_BVS(ea);
+    }
+
+    fn op_LBPL(&mut self, ea: u16) {
+        self.op_BPL(ea);
+    }
+
+    fn op_LBMI(&mut self, ea: u16) {
+        self.op_BMI(ea);
+    }
+
+    fn op_LBGE(&mut self, ea: u16) {
+        self.op_BGE(ea);
+    }
+
+    fn op_LBLT(&mut self, ea: u16) {
+        self.op_BLT(ea);
+    }
+
+    fn op_LBGT(&mut self, ea: u16) {
+        self.op_BGT(ea);
+    }
+
+    fn op_LBLE(&mut self, ea: u16) {
+        self.op_BLE(ea);
+    }
+
     /// Performs an inclusive OR operation between the contents of the
     /// condition code registers and the immediate value, and the result is
     /// placed in the condition code register. This instruction may be used
@@ -1068,6 +1106,15 @@ impl <M: Mem> CPU<M> {
     //
     // TODO: Write a test for me!
     fn op_LBSR(&mut self, ea: u16) {
+        let pc = self.regs.pc;
+        self.pushw_s(pc);
+        self.regs.pc = ea;
+    }
+
+    /// Program control is transferred to the effective address after storing
+    /// the return address on the hardware stack. A RTS instruction should
+    /// be the last executed instruction of the subroutine.
+    fn op_JSR(&mut self, ea: u16) {
         let pc = self.regs.pc;
         self.pushw_s(pc);
         self.regs.pc = ea;
@@ -1126,7 +1173,14 @@ impl <M: Mem> CPU<M> {
         let cf_lsn = if cc_h || lsn > 9 { 0x06 } else { 0x00 };
         let cf_msn = if cc_c || msn > 9 || (msn > 8 && lsn > 9) { 0x60 } else { 0x00 };
         let cf = cf_lsn | cf_msn;
-        self.regs.a = self.regs.a.wrapping_add(cf);
+
+        let a = self.regs.a as u16;
+        let b = cf as u16;
+        let c = a.wrapping_add(b);
+
+        self.set_nz8(c as u8);
+        self.regs.cc.set_if(CC_C, c & 0x100 != 0);
+        self.regs.a = c as u8;
     }
 
     /// This instruction transforms a twos complement
@@ -1134,7 +1188,7 @@ impl <M: Mem> CPU<M> {
     /// 16-bit value in the D accumulator.
     fn op_SEX(&mut self) {
         let res = if self.regs.b & 0x80 != 0 { 0xff } else { 0x00 };
-        self.set_nz(res);
+        self.set_nz8(res);
         self.regs.a = res;
     }
 
@@ -1280,7 +1334,7 @@ impl <M: Mem> CPU<M> {
 
     fn ld8(&mut self, ea: u16) -> u8 {
         let res = self.mem.loadb(ea);
-        self.set_nz(res);
+        self.set_nz8(res);
         self.regs.cc.remove(CC_V);
         res
     }
@@ -1330,7 +1384,7 @@ impl <M: Mem> CPU<M> {
 
     fn st8(&mut self, ea: u16, val: u8) {
         self.mem.storeb(ea, val);
-        self.set_nz(val);
+        self.set_nz8(val);
         self.regs.cc.remove(CC_V);
     }
 
@@ -1542,49 +1596,293 @@ impl <M: Mem> CPU<M> {
         self.swi(0xFFF2, false);
     }
 
-    fn op_SUBA(&mut self, ea: u16) {}
-    fn op_CMPA(&mut self, ea: u16) {}
-    fn op_SBCA(&mut self, ea: u16) {}
-    fn op_SUBD(&mut self, ea: u16) {}
-    fn op_ANDA(&mut self, ea: u16) {}
-    fn op_BITA(&mut self, ea: u16) {}
-    fn op_EORA(&mut self, ea: u16) {}
-    fn op_ADCA(&mut self, ea: u16) {}
-    fn op_ORA(&mut self, ea: u16) {}
-    fn op_ADDA(&mut self, ea: u16) {}
-    fn op_CMPX(&mut self, ea: u16) {}
-    fn op_JSR(&mut self, ea: u16) {}
-    fn op_SUBB(&mut self, ea: u16) {}
-    fn op_CMPB(&mut self, ea: u16) {}
-    fn op_SBCB(&mut self, ea: u16) {}
-    fn op_ADDD(&mut self, ea: u16) {}
-    fn op_ANDB(&mut self, ea: u16) {}
-    fn op_BITB(&mut self, ea: u16) {}
-    fn op_EORB(&mut self, ea: u16) {}
-    fn op_ADCB(&mut self, ea: u16) {}
-    fn op_ORB(&mut self, ea: u16) {}
-    fn op_ADDB(&mut self, ea: u16) {}
+    /// Replaces the operand with its twos complement. The C (carry)
+    /// bit represents a borrow and is set to the inverse of the
+    /// resulting binary carry. Note that 0x80 is replaced by itself
+    /// and only in this case is the V (overflow) bit set. The value
+    /// 0x00 is also replaced by itself, and only in this case is the
+    /// C (carry) bit cleared.
+    ///
+    /// Condition Codes:
+    ///
+    ///   H - U ndefined.
+    ///   N - Set if the result is negative; cleared otherwise.
+    ///   Z - Set if the result is zero; cleared otherwise.
+    ///   V - Set if the original operand was 1 0000000.
+    ///   C - Set if a borrow is generated; cleared otherwise.
+    fn neg(&mut self, val: u8) -> u8 {
+        let a = 0u16;
+        let b = val as u16;
+        let c = a.wrapping_sub(b);
 
-    fn op_LBRN(&mut self, ea: u16) {}
-    fn op_LBHI(&mut self, ea: u16) {}
-    fn op_LBLS(&mut self, ea: u16) {}
-    fn op_LBHS(&mut self, ea: u16) {}
-    fn op_LBLO(&mut self, ea: u16) {}
-    fn op_LBNE(&mut self, ea: u16) {}
-    fn op_LBEQ(&mut self, ea: u16) {}
-    fn op_LBVC(&mut self, ea: u16) {}
-    fn op_LBVS(&mut self, ea: u16) {}
-    fn op_LBPL(&mut self, ea: u16) {}
-    fn op_LBMI(&mut self, ea: u16) {}
-    fn op_LBGE(&mut self, ea: u16) {}
-    fn op_LBLT(&mut self, ea: u16) {}
-    fn op_LBGT(&mut self, ea: u16) {}
-    fn op_LBLE(&mut self, ea: u16) {}
-    fn op_CMPD(&mut self, ea: u16) {}
-    fn op_CMPY(&mut self, ea: u16) {}
+        self.set_nzvc8(a, b, c);
+        c as u8
+    }
 
-    fn op_CMPU(&mut self, ea: u16) {}
-    fn op_CMPS(&mut self, ea: u16) {}
+    fn op_NEG(&mut self, ea: u16) {
+        let val = self.mem.loadb(ea);
+        let res = self.neg(val);
+        self.mem.storeb(ea, res);
+    }
+
+    fn op_NEGA(&mut self) {
+        let val = self.regs.a;
+        let res = self.neg(val);
+        self.regs.a = res;
+    }
+
+    fn op_NEGB(&mut self) {
+        let val = self.regs.b;
+        let res = self.neg(val);
+        self.regs.b = res;
+    }
+
+    fn add8(&mut self, op1: u8, op2: u8) -> u8 {
+        let a = op1 as u16;
+        let b = op2 as u16;
+        let c = a.wrapping_add(b);
+
+        self.set_nzvc8(a, b, c);
+        self.set_h(a, b, c);
+        c as u8
+    }
+
+    fn add16(&mut self, op1: u16, op2: u16) -> u16 {
+        let a = op1 as u32;
+        let b = op2 as u32;
+        let c = a.wrapping_add(b);
+
+        self.set_nzvc16(a, b, c);
+        c as u16
+    }
+
+    fn op_ADDA(&mut self, ea: u16) {
+        let op1 = self.regs.a;
+        let op2 = self.mem.loadb(ea);
+        let res = self.add8(op1, op2);
+        self.regs.a = res;
+    }
+
+    fn op_ADDB(&mut self, ea: u16) {
+        let op1 = self.regs.b;
+        let op2 = self.mem.loadb(ea);
+        let res = self.add8(op1, op2);
+        self.regs.b = res;
+    }
+
+    fn op_ADDD(&mut self, ea: u16) {
+        let op1 = self.regs.d();
+        let op2 = self.mem.loadw(ea);
+        let res = self.add16(op1, op2);
+        self.regs.set_d(res);
+    }
+
+    fn adc8(&mut self, op1: u8, op2: u8) -> u8 {
+        let a = op1 as u16;
+        let b = op2 as u16;
+        let cf = if self.regs.cc.contains(CC_C) { 1 } else { 0 };
+        let c = a.wrapping_add(b).wrapping_add(cf);
+
+        self.set_nzvc8(a, b, c);
+        self.set_h(a, b, c);
+        c as u8
+    }
+
+    fn op_ADCA(&mut self, ea: u16) {
+        let op1 = self.regs.a;
+        let op2 = self.mem.loadb(ea);
+        let res = self.adc8(op1, op2);
+        self.regs.a = res;
+    }
+
+    fn op_ADCB(&mut self, ea: u16) {
+        let op1 = self.regs.b;
+        let op2 = self.mem.loadb(ea);
+        let res = self.adc8(op1, op2);
+        self.regs.b = res;
+    }
+
+    fn sub8(&mut self, op1: u8, op2: u8) -> u8 {
+        let a = op1 as u16;
+        let b = op2 as u16;
+        let c = a.wrapping_sub(b);
+
+        self.set_nzvc8(a, b, c);
+        self.set_h(a, b, c);
+        c as u8
+    }
+
+    fn sub16(&mut self, op1: u16, op2: u16) -> u16 {
+        let a = op1 as u32;
+        let b = op2 as u32;
+        let c = a.wrapping_sub(b);
+
+        self.set_nzvc16(a, b, c);
+        c as u16
+    }
+
+    fn op_SUBA(&mut self, ea: u16) {
+        let op1 = self.regs.a;
+        let op2 = self.mem.loadb(ea);
+        let res = self.sub8(op1, op2);
+        self.regs.a = res;
+    }
+
+    fn op_SUBB(&mut self, ea: u16) {
+        let op1 = self.regs.b;
+        let op2 = self.mem.loadb(ea);
+        let res = self.sub8(op1, op2);
+        self.regs.b = res;
+    }
+
+    fn op_SUBD(&mut self, ea: u16) {
+        let op1 = self.regs.d();
+        let op2 = self.mem.loadw(ea);
+        let res = self.sub16(op1, op2);
+        self.regs.set_d(res);
+    }
+
+    fn sbc8(&mut self, op1: u8, op2: u8) -> u8 {
+        let a = op1 as u16;
+        let b = op2 as u16;
+        let cf = if self.regs.cc.contains(CC_C) { 1 } else { 0 };
+        let c = a.wrapping_sub(b).wrapping_sub(cf);
+
+        self.set_nzvc8(a, b, c);
+        self.set_h(a, b, c);
+        c as u8
+    }
+
+    fn op_SBCA(&mut self, ea: u16) {
+        let op1 = self.regs.a;
+        let op2 = self.mem.loadb(ea);
+        let res = self.sbc8(op1, op2);
+        self.regs.a = res;
+    }
+
+    fn op_SBCB(&mut self, ea: u16) {
+        let op1 = self.regs.b;
+        let op2 = self.mem.loadb(ea);
+        let res = self.sbc8(op1, op2);
+        self.regs.b = res;
+    }
+
+    fn op_CMPA(&mut self, ea: u16) {
+        let op1 = self.regs.a;
+        let op2 = self.mem.loadb(ea);
+        let _   = self.sub8(op1, op2);
+    }
+
+    fn op_CMPB(&mut self, ea: u16) {
+        let op1 = self.regs.b;
+        let op2 = self.mem.loadb(ea);
+        let _   = self.sub8(op1, op2);
+    }
+
+    fn op_CMPD(&mut self, ea: u16) {
+        let op1 = self.regs.d();
+        let op2 = self.mem.loadw(ea);
+        let _   = self.sub16(op1, op2);
+    }
+
+    fn op_CMPX(&mut self, ea: u16) {
+        let op1 = self.regs.x;
+        let op2 = self.mem.loadw(ea);
+        let _   = self.sub16(op1, op2);
+    }
+
+    fn op_CMPY(&mut self, ea: u16) {
+        let op1 = self.regs.y;
+        let op2 = self.mem.loadw(ea);
+        let _   = self.sub16(op1, op2);
+    }
+
+    fn op_CMPU(&mut self, ea: u16) {
+        let op1 = self.regs.u;
+        let op2 = self.mem.loadw(ea);
+        let _   = self.sub16(op1, op2);
+    }
+
+    fn op_CMPS(&mut self, ea: u16) {
+        let op1 = self.regs.s;
+        let op2 = self.mem.loadw(ea);
+        let _   = self.sub16(op1, op2);
+    }
+
+    fn and(&mut self, a: u8, b: u8) -> u8 {
+        let res = a & b;
+        self.set_nz8(res);
+        self.regs.cc.remove(CC_V);
+        res
+    }
+
+    fn op_ANDA(&mut self, ea: u16) {
+        let op1 = self.regs.a;
+        let op2 = self.mem.loadb(ea);
+        let res = self.and(op1, op2);
+        self.regs.a = res;
+    }
+
+    fn op_ANDB(&mut self, ea: u16) {
+        let op1 = self.regs.b;
+        let op2 = self.mem.loadb(ea);
+        let res = self.and(op1, op2);
+        self.regs.b = res;
+    }
+
+    fn op_BITA(&mut self, ea: u16) {
+        let op1 = self.regs.a;
+        let op2 = self.mem.loadb(ea);
+        let _   = self.and(op1, op2);
+    }
+
+    fn op_BITB(&mut self, ea: u16) {
+        let op1 = self.regs.b;
+        let op2 = self.mem.loadb(ea);
+        let _   = self.and(op1, op2);
+    }
+
+    fn eor(&mut self, a: u8, b: u8) -> u8 {
+        let res = a ^ b;
+        self.set_nz8(res);
+        self.regs.cc.remove(CC_V);
+        res
+    }
+
+    fn op_EORA(&mut self, ea: u16) {
+        let op1 = self.regs.a;
+        let op2 = self.mem.loadb(ea);
+        let res = self.eor(op1, op2);
+        self.regs.a = res;
+    }
+
+    fn op_EORB(&mut self, ea: u16) {
+        let op1 = self.regs.b;
+        let op2 = self.mem.loadb(ea);
+        let res = self.eor(op1, op2);
+        self.regs.b = res;
+    }
+
+    fn or(&mut self, a: u8, b: u8) -> u8 {
+        let res = a | b;
+        self.set_nz8(res);
+        self.regs.cc.remove(CC_V);
+        res
+    }
+
+    fn op_ORA(&mut self, ea: u16) {
+        let op1 = self.regs.a;
+        let op2 = self.mem.loadb(ea);
+        let res = self.or(op1, op2);
+        self.regs.a = res;
+    }
+
+    fn op_ORB(&mut self, ea: u16) {
+        let op1 = self.regs.b;
+        let op2 = self.mem.loadb(ea);
+        let res = self.or(op1, op2);
+        self.regs.b = res;
+    }
 
     /// Handle an illegal CPU instruction.
     fn illegal_instruction(&self, opcode: u8) {

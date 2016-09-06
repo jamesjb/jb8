@@ -419,6 +419,37 @@ fn bsr_rts() {
     assert_eq!(cpu.regs.pc, 0x102);
 }
 
+// Test calling and returning from absolute subroutine calls.
+#[test]
+fn jsr_rts() {
+    let mut cpu = test_cpu();
+
+    cpu.mem.store(0x0100, &[    //      org $100
+        0xbd, 0x01, 0x20,       //      jsr $120
+        0x12,                   //      nop
+    ]);
+
+    cpu.mem.store(0x0120, &[    //      org $120
+        0x39,                   //      rts
+    ]);
+
+    cpu.regs.s  = 0x400;
+    cpu.regs.pc = 0x100;
+
+    cpu.step();
+    cpu.dump_regs();
+
+    assert_eq!(cpu.regs.s, 0x3fe);
+    assert_eq!(cpu.regs.pc, 0x120);
+    assert_eq!(cpu.mem.loadw(cpu.regs.s), 0x103);
+
+    cpu.step();
+    cpu.dump_regs();
+
+    assert_eq!(cpu.regs.s, 0x400);
+    assert_eq!(cpu.regs.pc, 0x103);
+}
+
 #[test]
 fn sex() {
     let mut cpu = test_cpu();
@@ -711,4 +742,372 @@ fn swi_reg_return() {
 
     assert_eq!(cpu.regs.x, 0xCAFE);
     assert_eq!(cpu.regs.y, 0xBABE);
+}
+
+// Tests the flags for both signed addition and BCD, along with
+// the DAA instruction.
+//
+// Thanks to Wikipedia at [https://en.wikipedia.org/wiki/Half-carry_flag]
+// for the examples.
+#[test]
+fn add8_daa() {
+    let mut cpu = test_cpu();
+
+    cpu.mem.store(0x0100, &[    //      org  $100
+        0x86, 0x25,             //      lda  #$25
+        0x8B, 0x48,             //      adda #$48
+        0x19,                   //      daa
+        0x86, 0x39,             //      lda  #$39
+        0x8B, 0x48,             //      adda #$48
+        0x19,                   //      daa
+        0x86, 0x72,             //      lda  #$72
+        0x8B, 0x73,             //      adda #$73
+        0x19,                   //      daa
+    ]);
+
+    cpu.regs.pc = 0x100;
+    cpu.step_n(3);
+    cpu.dump_regs();
+
+    assert_eq!(cpu.regs.a, 0x73);
+    assert_flags! { cpu =>
+        CC_H: false,
+        CC_N: false,
+        CC_Z: false,
+        CC_V: false,
+        CC_C: false
+    }
+
+    cpu.step_n(2);
+
+    assert_eq!(cpu.regs.a, 0x81);
+    assert_flags! { cpu =>
+        CC_H: true,
+        CC_N: true,
+        CC_Z: false,
+        CC_V: true,
+        CC_C: false
+    }
+
+    cpu.step();
+
+    assert_eq!(cpu.regs.a, 0x87);
+
+    cpu.step_n(2);
+
+    assert_eq!(cpu.regs.a, 0xe5);
+    assert_flags! { cpu =>
+        CC_H: false,
+        CC_N: true,
+        CC_Z: false,
+        CC_V: true,
+        CC_C: false
+    }
+
+    cpu.step();
+
+    assert_eq!(cpu.regs.a, 0x45);
+    assert_flags! { cpu =>
+        CC_N: false,
+        CC_Z: false,
+        CC_C: true
+    }
+}
+
+#[test]
+fn add16() {
+    let mut cpu = test_cpu();
+
+    cpu.mem.store(0x0100, &[    //      org  $100
+        0xCC, 0xCA, 0xFE,       //      ldd  #$CAFE
+        0xC3, 0xBA, 0xBE,       //      addd #$BABE
+    ]);
+
+    cpu.regs.pc = 0x100;
+    cpu.step_n(2);
+    cpu.dump_regs();
+
+    assert_eq!(cpu.regs.d(), 0x85BC);
+    assert_flags! { cpu =>
+        CC_N: true,
+        CC_Z: false,
+        CC_V: false,
+        CC_C: true
+    }
+}
+
+#[test]
+fn adc() {
+    let mut cpu = test_cpu();
+
+    cpu.mem.store(0x0100, &[    //      org  $100
+        0x86, 0xCA,             //      lda  #$CA
+        0xC6, 0xFE,             //      ldb  #$FE
+        0xCB, 0xBE,             //      addb #$BE
+        0x89, 0xBA,             //      adca #$BA
+    ]);
+
+    cpu.regs.pc = 0x100;
+    cpu.step_n(4);
+    cpu.dump_regs();
+
+    assert_eq!(cpu.regs.d(), 0x85BC);
+    assert_flags! { cpu =>
+        CC_N: true,
+        CC_Z: false,
+        CC_V: false,
+        CC_C: true
+    }
+}
+
+#[test]
+fn sub8() {
+    let mut cpu = test_cpu();
+
+    cpu.mem.store(0x0100, &[    //      org  $100
+        0x86, 0x00,             //      lda  #$00
+        0x80, 0x10,             //      suba #$10
+        0xC6, 0x80,             //      ldb  #$80
+        0xC0, 0x01,             //      subb #$01
+    ]);
+
+    cpu.regs.pc = 0x100;
+    cpu.step_n(2);
+    cpu.dump_regs();
+
+    assert_eq!(cpu.regs.a, 0xF0);
+    assert_flags! { cpu =>
+        CC_N: true,
+        CC_Z: false,
+        CC_V: false,
+        CC_C: true
+    }
+
+    cpu.step_n(2);
+    cpu.dump_regs();
+
+    assert_eq!(cpu.regs.b, 0x7F);
+    assert_flags! { cpu =>
+        CC_N: false,
+        CC_Z: false,
+        CC_V: true,
+        CC_C: false
+    }
+}
+
+#[test]
+fn sub16() {
+    let mut cpu = test_cpu();
+
+    cpu.mem.store(0x0100, &[    //      org  $100
+        0xCC, 0x00, 0x00,       //      ldd  #$0000
+        0x83, 0x00, 0x10,       //      subd #$0010
+        0xCC, 0x80, 0x00,       //      ldd  #$8000
+        0x83, 0x00, 0x01,       //      subd #$0001
+    ]);
+
+    cpu.regs.pc = 0x100;
+    cpu.step_n(2);
+    cpu.dump_regs();
+
+    assert_eq!(cpu.regs.d(), 0xFFF0);
+    assert_flags! { cpu =>
+        CC_N: true,
+        CC_Z: false,
+        CC_V: false,
+        CC_C: true
+    }
+
+    cpu.step_n(2);
+    cpu.dump_regs();
+
+    assert_eq!(cpu.regs.d(), 0x7FFF);
+    assert_flags! { cpu =>
+        CC_N: false,
+        CC_Z: false,
+        CC_V: true,
+        CC_C: false
+    }
+}
+
+#[test]
+fn sbc() {
+    let mut cpu = test_cpu();
+
+    cpu.mem.store(0x0100, &[    //      org  $100
+        0x86, 0x00,             //      lda  #$00
+        0xC6, 0x00,             //      ldb  #$00
+        0xC0, 0x10,             //      subb #$10
+        0x82, 0x00,             //      sbca #$00
+    ]);
+
+    cpu.regs.pc = 0x100;
+    cpu.step_n(4);
+    cpu.dump_regs();
+
+    assert_eq!(cpu.regs.d(), 0xFFF0);
+    assert_flags! { cpu =>
+        CC_N: true,
+        CC_Z: false,
+        CC_V: false,
+        CC_C: true
+    }
+}
+
+#[test]
+fn cmp() {
+    let mut cpu = test_cpu();
+
+    cpu.mem.store(0x0100, &[    //      org  $100
+        0x10, 0xCE, 0x20, 0x00, //      lds  #$2000
+        0xCE, 0x30, 0x00,       //      ldu  #$3000
+
+        0x86, 0xAA,             //      lda  #$AA
+        0xC6, 0xBB,             //      ldb  #$BB
+        0x8E, 0xCA, 0xFE,       //      ldx  #$CAFE
+        0x10, 0x8E, 0xBA, 0xBE, //      ldy  #$BABE
+
+        0x81, 0xAB,             //      cmpa #$AB
+        0x2C, 0x02,             //      bge  1f
+        0x8D, 0x19,             //      bsr  cnt
+
+        0xC1, 0xAA,             // 1    cmpb #$AA
+        0x2F, 0x02,             //      ble  1f
+        0x8D, 0x13,             //      bsr  cnt
+
+        0x8C, 0x00, 0x00,       // 1    cmpx #$0000
+        0x27, 0x02,             //      beq  1f
+        0x8D, 0x0C,             //      bsr  cnt
+
+        0x10, 0x8C, 0xBA, 0xBE, // 1    cmpy #$BABE
+        0x26, 0x02,             //      bne  1f
+        0x8D, 0x04,             //      bsr  cnt
+
+        0x96, 0x00,             // 1    lda  count
+        0x3C, 0x00,             //      cwai $00
+
+        0x0C, 0x00,             // cnt  inc  count
+        0x39,                   //      rts
+    ]);
+
+    cpu.regs.pc = 0x100;
+    cpu.run();
+
+    assert_eq!(cpu.regs.a, 4);      // 4 tests successful
+}
+
+#[test]
+fn and() {
+    let mut cpu = test_cpu();
+
+    cpu.mem.store(0x0100, &[    //      org  $100
+        0x86, 0xFF,             //      lda  #$FF
+        0x84, 0xAA,             //      anda #$AA
+        0xC6, 0xAA,             //      ldb  #$AA
+        0xC4, 0x01,             //      andb #$01
+    ]);
+
+    cpu.regs.pc = 0x100;
+    cpu.step_n(2);
+
+    assert_eq!(cpu.regs.a, 0xAA);
+    assert_flags! { cpu =>
+        CC_N: true,
+        CC_Z: false
+    }
+
+    cpu.step_n(2);
+
+    assert_eq!(cpu.regs.b, 0x00);
+    assert_flags! { cpu =>
+        CC_N: false,
+        CC_Z: true
+    }
+}
+
+#[test]
+fn bit() {
+    let mut cpu = test_cpu();
+
+    cpu.mem.store(0x0100, &[    //      org  $100
+        0x86, 0xFF,             //      lda  #$FF
+        0x85, 0xAA,             //      bita #$AA
+        0xC6, 0xAA,             //      ldb  #$AA
+        0xC5, 0x01,             //      bitb #$01
+    ]);
+
+    cpu.regs.pc = 0x100;
+    cpu.step_n(2);
+
+    assert_eq!(cpu.regs.a, 0xFF);
+    assert_flags! { cpu =>
+        CC_N: true,
+        CC_Z: false
+    }
+
+    cpu.step_n(2);
+
+    assert_eq!(cpu.regs.b, 0xAA);
+    assert_flags! { cpu =>
+        CC_N: false,
+        CC_Z: true
+    }
+}
+
+#[test]
+fn eor() {
+    let mut cpu = test_cpu();
+
+    cpu.mem.store(0x0100, &[    //      org  $100
+        0x86, 0xFF,             //      lda  #$FF
+        0x88, 0xAA,             //      eora #$AA
+        0xC6, 0xAA,             //      ldb  #$AA
+        0xC8, 0xAA,             //      eorb #$AA
+    ]);
+
+    cpu.regs.pc = 0x100;
+    cpu.step_n(2);
+
+    assert_eq!(cpu.regs.a, 0x55);
+    assert_flags! { cpu =>
+        CC_N: false,
+        CC_Z: false
+    }
+
+    cpu.step_n(2);
+
+    assert_eq!(cpu.regs.b, 0x00);
+    assert_flags! { cpu =>
+        CC_N: false,
+        CC_Z: true
+    }
+}
+
+#[test]
+fn or() {
+    let mut cpu = test_cpu();
+
+    cpu.mem.store(0x0100, &[    //      org  $100
+        0x86, 0x55,             //      lda  #$55
+        0x8A, 0xAA,             //      ora  #$AA
+        0xC6, 0xF0,             //      ldb  #$F0
+        0xCA, 0x0F,             //      orb  #$0F
+    ]);
+
+    cpu.regs.pc = 0x100;
+    cpu.step_n(2);
+
+    assert_eq!(cpu.regs.a, 0xFF);
+    assert_flags! { cpu =>
+        CC_N: true,
+        CC_Z: false
+    }
+
+    cpu.step_n(2);
+
+    assert_eq!(cpu.regs.b, 0xFF);
+    assert_flags! { cpu =>
+        CC_N: true,
+        CC_Z: false
+    }
 }
