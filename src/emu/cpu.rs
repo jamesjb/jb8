@@ -869,14 +869,14 @@ impl <M: Mem> CPU<M> {
     /// Branch never, equivalent to NOP.
     fn op_BRN(&mut self, ea: u16) {}
 
-    /// Branch to `ea` if `flags` are clear.
+    /// Branch to `ea` if all the flags in `flags` are clear.
     fn branch_if_clear(&mut self, flags: CCFlags, ea: u16) {
         let cc = self.regs.cc;
         let val = cc & flags;
         if val.is_empty() { self.regs.pc = ea; }
     }
 
-    /// Branch to `ea` if `flags` are set.
+    /// Branch to `ea` if all the flags in `flags` are set.
     fn branch_if_set(&mut self, flags: CCFlags, ea: u16) {
         let cc = self.regs.cc;
         let val = cc & flags;
@@ -896,7 +896,8 @@ impl <M: Mem> CPU<M> {
     /// binary values, this instruction will branch if the register was
     /// lower than or the same as the memory operand.
     fn op_BLS(&mut self, ea: u16) {
-        self.branch_if_set(CC_C | CC_Z, ea);
+        self.branch_if_set(CC_C, ea);
+        self.branch_if_set(CC_Z, ea);
     }
 
     /// Tests the state of the C (carry) bit and causes a branch if it is clear.
