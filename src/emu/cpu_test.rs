@@ -21,8 +21,13 @@ fn test_cpu() -> CPU<RAM> {
 fn nega_0x80() {
     let mut cpu = test_cpu();
 
-    cpu.regs.a = 0x80;
-    cpu.op_NEGA();
+    cpu.mem.store(0x0100, &[    //      org $100
+        0x86, 0x80,             //      lda #$80
+        0x40,                   //      nega
+    ]);
+
+    cpu.regs.pc = 0x100;
+    cpu.step_n(2);
 
     assert_eq!(cpu.regs.a, 0x80);
     assert_flags! { cpu =>
@@ -38,8 +43,13 @@ fn nega_0x80() {
 fn negb_0x00() {
     let mut cpu = test_cpu();
 
-    cpu.regs.b = 0x00;
-    cpu.op_NEGB();
+    cpu.mem.store(0x0100, &[    //      org $100
+        0xC6, 0x00,             //      ldb #$00
+        0x50,                   //      negb
+    ]);
+
+    cpu.regs.pc = 0x100;
+    cpu.step_n(2);
 
     assert_eq!(cpu.regs.b, 0x00);
     assert_flags! { cpu =>
@@ -55,8 +65,14 @@ fn negb_0x00() {
 fn nega_0x01() {
     let mut cpu = test_cpu();
 
-    cpu.regs.a = 0x01;
-    cpu.op_NEGA();
+    cpu.mem.store(0x0100, &[    //      org $100
+        0x86, 0x01,             //      lda #$01
+        0x40,                   //      nega
+        0x40,                   //      nega
+    ]);
+
+    cpu.regs.pc = 0x100;
+    cpu.step_n(2);
 
     assert_eq!(cpu.regs.a, 0xFF);
     assert_flags! { cpu =>
@@ -66,7 +82,7 @@ fn nega_0x01() {
         CC_C: true
     }
 
-    cpu.op_NEGA();
+    cpu.step();
 
     assert_eq!(cpu.regs.a, 0x01);
     assert_flags! { cpu =>
@@ -81,23 +97,21 @@ fn nega_0x01() {
 #[test]
 fn lsr_indexed() {
     let mut cpu = test_cpu();
-    const CODE_ADDR: u16 = 0x100;
-    const DATA_ADDR: u16 = 0x400;
 
-    cpu.mem.store(DATA_ADDR, &[1, 2, 3, 4]);
-    cpu.mem.store(CODE_ADDR, &[
-        0x64, 0x80,                 // lsr ,x+
-        0x64, 0x80,                 // lsr ,x+
-        0x64, 0x80,                 // lsr ,x+
-        0x64, 0x80,                 // lsr ,x+
+    cpu.mem.store(0x0400, &[1, 2, 3, 4]);
+    cpu.mem.store(0x0100, &[    //      org $100
+        0x64, 0x80,             //      lsr ,x+
+        0x64, 0x80,             //      lsr ,x+
+        0x64, 0x80,             //      lsr ,x+
+        0x64, 0x80,             //      lsr ,x+
     ]);
 
-    cpu.regs.pc = CODE_ADDR;
-    cpu.regs.x  = DATA_ADDR;
+    cpu.regs.pc = 0x100;
+    cpu.regs.x  = 0x400;
     cpu.step_n(4);
 
     let mut res = [0; 4];
-    cpu.mem.load(DATA_ADDR, &mut res);
+    cpu.mem.load(0x400, &mut res);
 
     assert_eq!(res, [0, 1, 1, 2]);
     assert_flags! { cpu =>
@@ -112,8 +126,15 @@ fn lsr_indexed() {
 fn asra() {
     let mut cpu = test_cpu();
 
-    cpu.regs.a = -4i8 as u8;
-    cpu.op_ASRA();
+    cpu.mem.store(0x0100, &[    //      org $100
+        0x86, 0xFC,             //      lda #$FC (-4)
+        0x47,                   //      asra
+        0x47,                   //      asra
+        0x47,                   //      asra
+    ]);
+
+    cpu.regs.pc = 0x100;
+    cpu.step_n(2);
 
     assert_eq!(cpu.regs.a as i8, -2);
     assert_flags! { cpu =>
@@ -122,8 +143,7 @@ fn asra() {
         CC_C: false
     }
 
-    cpu.op_ASRA();
-    cpu.op_ASRA();
+    cpu.step_n(2);
 
     assert_eq!(cpu.regs.a, 0xff);
     assert_flags! { cpu =>
@@ -137,8 +157,15 @@ fn asra() {
 fn lsla() {
     let mut cpu = test_cpu();
 
-    cpu.regs.a = 0b11000000;
-    cpu.op_LSLA();
+    cpu.mem.store(0x0100, &[    //      org $100
+        0x86, 0xC0,             //      lda #$C0
+        0x48,                   //      lsla
+        0x48,                   //      lsla
+        0x48,                   //      lsla
+    ]);
+
+    cpu.regs.pc = 0x100;
+    cpu.step_n(2);
 
     assert_eq!(cpu.regs.a, 0b10000000);
     assert_flags! { cpu =>
@@ -148,7 +175,7 @@ fn lsla() {
         CC_C: true
     }
 
-    cpu.op_LSLA();
+    cpu.step();
 
     assert_eq!(cpu.regs.a, 0x00);
     assert_flags! { cpu =>
@@ -158,7 +185,7 @@ fn lsla() {
         CC_C: true
     }
 
-    cpu.op_LSLA();
+    cpu.step();
 
     assert_eq!(cpu.regs.a, 0x00);
     assert_flags! { cpu =>
@@ -174,8 +201,14 @@ fn lsla() {
 fn dec_wrap() {
     let mut cpu = test_cpu();
 
-    cpu.regs.a = 2;
-    cpu.op_DECA();
+    cpu.mem.store(0x0100, &[    //      org $100
+        0x86, 0x02,             //      lda #$02
+        0x4A,                   //      deca
+        0x4A,                   //      deca
+    ]);
+
+    cpu.regs.pc = 0x100;
+    cpu.step_n(2);
 
     assert_eq!(cpu.regs.a, 1);
     assert_flags! { cpu =>
@@ -184,7 +217,7 @@ fn dec_wrap() {
         CC_V: false
     }
 
-    cpu.op_DECA();
+    cpu.step();
 
     assert_eq!(cpu.regs.a, 0);
     assert_flags! { cpu =>
@@ -199,8 +232,14 @@ fn dec_wrap() {
 fn inc_wrap() {
     let mut cpu = test_cpu();
 
-    cpu.regs.a = 0x7e;
-    cpu.op_INCA();
+    cpu.mem.store(0x0100, &[    //      org $100
+        0x86, 0x7E,             //      lda #$7E
+        0x4C,                   //      inca
+        0x4C,                   //      inca
+    ]);
+
+    cpu.regs.pc = 0x100;
+    cpu.step_n(2);
 
     assert_eq!(cpu.regs.a, 0x7f);
     assert_flags! { cpu =>
@@ -209,7 +248,7 @@ fn inc_wrap() {
         CC_V: false
     }
 
-    cpu.op_INCA();
+    cpu.step();
 
     assert_eq!(cpu.regs.a, 0x80);
     assert_flags! { cpu =>
@@ -223,8 +262,15 @@ fn inc_wrap() {
 fn tsta() {
     let mut cpu = test_cpu();
 
-    cpu.regs.a = 0x00;
-    cpu.op_TSTA();
+    cpu.mem.store(0x0100, &[    //      org $100
+        0x86, 0x00,             //      lda #$00
+        0x4D,                   //      tsta
+        0x86, 0xFF,             //      lda #$FF
+        0x4D,                   //      tsta
+    ]);
+
+    cpu.regs.pc = 0x100;
+    cpu.step_n(2);
 
     assert_flags! { cpu =>
         CC_N: false,
@@ -232,8 +278,7 @@ fn tsta() {
         CC_V: false
     }
 
-    cpu.regs.a = 0xFF;
-    cpu.op_TSTA();
+    cpu.step_n(2);
 
     assert_flags! { cpu =>
         CC_N: true,
@@ -246,8 +291,13 @@ fn tsta() {
 fn clra() {
     let mut cpu = test_cpu();
 
-    cpu.regs.a = 0x80;
-    cpu.op_CLRA();
+    cpu.mem.store(0x0100, &[    //      org $100
+        0x86, 0x80,             //      lda #$80
+        0x4F,                   //      clra
+    ]);
+
+    cpu.regs.pc = 0x100;
+    cpu.step_n(2);
 
     assert_eq!(cpu.regs.a, 0x00);
     assert_flags! { cpu =>
@@ -265,26 +315,30 @@ fn clra() {
 fn jmp() {
     let mut cpu = test_cpu();
 
-    cpu.regs.pc = 0;
-    cpu.op_JMP(0x100);
+    cpu.mem.store(0x0100, &[    //      org $100
+        0x7E, 0x01, 0x00,       //      jmp $100
+    ]);
+
+    cpu.regs.pc = 0x100;
+    cpu.step();
+
     assert_eq!(cpu.regs.pc, 0x100);
 }
 
 #[test]
 fn bra() {
     let mut cpu = test_cpu();
-    const CODE_ADDR: u16 = 0x100;
 
-    cpu.mem.store(CODE_ADDR, &[
-        0x12,               // top     nop
-        0x12,               //         nop
-        0x20, 0xfc          //         bra top
+    cpu.mem.store(0x0100, &[    //      org $100
+        0x12,                   // top  nop
+        0x12,                   //      nop
+        0x20, 0xfc              //      bra top
     ]);
 
-    cpu.regs.pc = CODE_ADDR;
+    cpu.regs.pc = 0x100;
     cpu.step_n(3);
 
-    assert_eq!(cpu.regs.pc, CODE_ADDR);
+    assert_eq!(cpu.regs.pc, 0x100);
 }
 
 #[test]
@@ -292,32 +346,32 @@ fn lbra() {
     let mut cpu = test_cpu();
     const CODE_ADDR: u16 = 0x100;
 
-    cpu.mem.store(CODE_ADDR, &[
-        0x12,               // top     nop
-        0x12,               //         nop
-        0x16, 0xff, 0xfb    //         lbra top
+    cpu.mem.store(0x0100, &[    //      org $100
+        0x12,                   // top  nop
+        0x12,                   //      nop
+        0x16, 0xff, 0xfb        //      lbra top
     ]);
 
-    cpu.regs.pc = CODE_ADDR;
+    cpu.regs.pc = 0x100;
     cpu.step_n(3);
 
-    assert_eq!(cpu.regs.pc, CODE_ADDR);
+    assert_eq!(cpu.regs.pc, 0x100);
 }
 
 #[test]
 fn bhi() {
     let mut cpu = test_cpu();
 
-    cpu.mem.store(0x100, &[         //              org $100
-        0x1c, 0xf0,                 // 0100         andcc #$f0
-        0x1a, 0x05,                 // 0102         orcc #$05
-        0x22, 0x1a,                 // 0104         bhi go
-        0x1c, 0xfb,                 // 0106         andcc #$fb      ; clear Z
-        0x22, 0x16,                 // 0108         bhi go
-        0x1c, 0xfe,                 // 010A         andcc #$fe      ; clear C
-        0x22, 0x12,                 // 010C         bhi go
-    ]);                             //              org $120
-                                    // 0120 go      ...
+    cpu.mem.store(0x0100, &[    //      org $100
+        0x1c, 0xf0,             //      andcc #$f0
+        0x1a, 0x05,             //      orcc #$05
+        0x22, 0x1a,             //      bhi go
+        0x1c, 0xfb,             //      andcc #$fb      ; clear Z
+        0x22, 0x16,             //      bhi go
+        0x1c, 0xfe,             //      andcc #$fe      ; clear C
+        0x22, 0x12,             //      bhi go
+    ]);                         //      org $120
+                                // go   ...
 
     cpu.regs.pc = 0x100;
 
@@ -339,13 +393,13 @@ fn bhi() {
 fn bsr_rts() {
     let mut cpu = test_cpu();
 
-    cpu.mem.store(0x100, &[         //              org $100
-        0x8d, 0x1E,                 // 0100         bsr go
-        0x12,                       // 0102         nop
+    cpu.mem.store(0x0100, &[    //      org $100
+        0x8d, 0x1E,             //      bsr go
+        0x12,                   //      nop
     ]);
 
-    cpu.mem.store(0x120, &[         //              org $120
-        0x39,                       // 0120 go      rts
+    cpu.mem.store(0x0120, &[    //      org $120
+        0x39,                   // go   rts
     ]);
 
     cpu.regs.s  = 0x400;
@@ -369,12 +423,18 @@ fn bsr_rts() {
 fn sex() {
     let mut cpu = test_cpu();
 
-    cpu.regs.b = 0x8E;
-    cpu.op_SEX();
+    cpu.mem.store(0x0100, &[    //      org $100
+        0xC6, 0x8E,             //      ldb #$8E
+        0x1D,                   //      sex
+        0xC6, 0x10,             //      ldb #$10
+        0x1D,                   //      sex
+    ]);
+
+    cpu.regs.pc = 0x100;
+    cpu.step_n(2);
     assert_eq!(cpu.regs.a, 0xFF);
 
-    cpu.regs.b = 0x10;
-    cpu.op_SEX();
+    cpu.step_n(2);
     assert_eq!(cpu.regs.a, 0x00);
 }
 
@@ -382,9 +442,9 @@ fn sex() {
 fn ld8() {
     let mut cpu = test_cpu();
 
-    cpu.mem.store(0x100, &[         // org $100
-        0x86, 0x12,                 // lda #$12
-        0xC6, 0x34,                 // ldb #$34
+    cpu.mem.store(0x0100, &[    //      org $100
+        0x86, 0x12,             //      lda #$12
+        0xC6, 0x34,             //      ldb #$34
     ]);
 
     cpu.regs.pc = 0x100;
@@ -399,14 +459,14 @@ fn ld8() {
 fn leax() {
     let mut cpu = test_cpu();
 
-    cpu.mem.store(0x100, &[         // org $100
-        0x8E, 0x12, 0x34,           // ldx #$1234
-        0x10, 0x8E, 0x43, 0x21,     // ldy #$4321
-        0x30, 0x80,                 // leax ,x+
-        0x30, 0x01,                 // leax 1,x
-        0x30, 0x89, 0x01, 0x00,     // leax 256,x
-        0x30, 0xA0,                 // leax ,y+
-        0x30, 0xA3,                 // leax ,--y
+    cpu.mem.store(0x0100, &[    //      org $100
+        0x8E, 0x12, 0x34,       //      ldx #$1234
+        0x10, 0x8E, 0x43, 0x21, //      ldy #$4321
+        0x30, 0x80,             //      leax ,x+
+        0x30, 0x01,             //      leax 1,x
+        0x30, 0x89, 0x01, 0x00, //      leax 256,x
+        0x30, 0xA0,             //      leax ,y+
+        0x30, 0xA3,             //      leax ,--y
     ]);
 
     cpu.regs.pc = 0x100;
@@ -444,9 +504,9 @@ fn push_pull_s() {
     cpu.regs.pc = 0x0100;
     let orig_regs = cpu.regs;
 
-    cpu.mem.store(0x0100, &[        // org $100
-        0x34, 0xFF,                 // pshs pc, u, y, x, dp, b, a, cc
-        0x35, 0xFF,                 // puls pc, u, y, x, dp, b, a, cc
+    cpu.mem.store(0x0100, &[    //      org $100
+        0x34, 0xFF,             //      pshs pc, u, y, x, dp, b, a, cc
+        0x35, 0xFF,             //      puls pc, u, y, x, dp, b, a, cc
     ]);
 
     cpu.step();
@@ -471,9 +531,9 @@ fn push_pull_u() {
     cpu.regs.pc = 0x0100;
     let orig_regs = cpu.regs;
 
-    cpu.mem.store(0x0100, &[        // org $100
-        0x36, 0xFF,                 // pshu pc, s, y, x, dp, b, a, cc
-        0x37, 0xFF,                 // pulu pc, s, y, x, dp, b, a, cc
+    cpu.mem.store(0x0100, &[    //      org $100
+        0x36, 0xFF,             //      pshu pc, s, y, x, dp, b, a, cc
+        0x37, 0xFF,             //      pulu pc, s, y, x, dp, b, a, cc
     ]);
 
     cpu.step();
@@ -489,10 +549,10 @@ fn push_pull_u() {
 fn abx() {
     let mut cpu = test_cpu();
 
-    cpu.mem.store(0x0100, &[        // org $100
-        0x8E, 0xFF, 0x80,           // ldx #$FF80
-        0xC6, 0xC0,                 // ldb #$C0
-        0x3A,                       // abx
+    cpu.mem.store(0x0100, &[    //      org $100
+        0x8E, 0xFF, 0x80,       //      ldx #$FF80
+        0xC6, 0xC0,             //      ldb #$C0
+        0x3A,                   //      abx
     ]);
 
     cpu.regs.pc = 0x0100;
@@ -507,10 +567,10 @@ fn abx() {
 fn rti_e_set() {
     let mut cpu = test_cpu();
 
-    cpu.mem.store(0x0100, &[        // org $100
-        0x1A, 0x80,                 // orcc #$80   ; set E
-        0x34, 0xFF,                 // pshs pc, u, y, x, dp, b, a, cc
-        0x3B,                       // rti
+    cpu.mem.store(0x0100, &[    //      org $100
+        0x1A, 0x80,             //      orcc #$80   ; set E
+        0x34, 0xFF,             //      pshs pc, u, y, x, dp, b, a, cc
+        0x3B,                   //      rti
     ]);
 
     cpu.regs.s  = 0x0400;
@@ -530,10 +590,10 @@ fn rti_e_set() {
 fn rti_e_clear() {
     let mut cpu = test_cpu();
 
-    cpu.mem.store(0x0100, &[        // org $100
-        0x1C, 0x7F,                 // andcc #$7F   ; clear E
-        0x34, 0x81,                 // pshs pc, cc
-        0x3B,                       // rti
+    cpu.mem.store(0x0100, &[    //      org $100
+        0x1C, 0x7F,             //      andcc #$7F   ; clear E
+        0x34, 0x81,             //      pshs pc, cc
+        0x3B,                   //      rti
     ]);
 
     cpu.regs.s  = 0x0400;
@@ -553,12 +613,12 @@ fn rti_e_clear() {
 fn mul() {
     let mut cpu = test_cpu();
 
-    cpu.mem.store(0x0100, &[        // org $100
-        0x86, 0xFF,                 // lda #$FF
-        0xC6, 0xFF,                 // ldb #$FF
-        0x3D,                       // mul
-        0x4F,                       // clra
-        0x3D,                       // mul
+    cpu.mem.store(0x0100, &[    //      org $100
+        0x86, 0xFF,             //      lda #$FF
+        0xC6, 0xFF,             //      ldb #$FF
+        0x3D,                   //      mul
+        0x4F,                   //      clra
+        0x3D,                   //      mul
     ]);
 
     cpu.regs.pc = 0x0100;
@@ -588,21 +648,21 @@ fn swi() {
     //
     //   $CAFE to 0x0000
     //   $BABE to 0x0002
-    cpu.mem.store(0xE000, &[            // org $E000
-        0x8E, 0xCA, 0xFE,               // ldx #$CAFE
-        0x9F, 0x00,                     // stx <$00
-        0x10, 0x8E, 0xBA, 0xBE,         // ldy #$BABE
-        0x10, 0x9F, 0x02,               // sty <$02
-        0x3B,                           // rti
+    cpu.mem.store(0xE000, &[    //      org $E000
+        0x8E, 0xCA, 0xFE,       //      ldx #$CAFE
+        0x9F, 0x00,             //      stx <$00
+        0x10, 0x8E, 0xBA, 0xBE, //      ldy #$BABE
+        0x10, 0x9F, 0x02,       //      sty <$02
+        0x3B,                   //      rti
     ]);
 
     // Test code lives at 0x0100.
-    cpu.mem.store(0x0100, &[            // org $100
-        0x86, 0x00,                     // lda #$00
-        0x3F,                           // swi
-        0x9E, 0x00,                     // ldx <$00
-        0x10, 0x9E, 0x02,               // ldy <$02
-        0x86, 0xAA,                     // lda #$AA
+    cpu.mem.store(0x0100, &[    //      org $100
+        0x86, 0x00,             //      lda #$00
+        0x3F,                   //      swi
+        0x9E, 0x00,             //      ldx <$00
+        0x10, 0x9E, 0x02,       //      ldy <$02
+        0x86, 0xAA,             //      lda #$AA
     ]);
 
     // Store the address of the SWI handler at the vector.
