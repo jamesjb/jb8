@@ -495,6 +495,7 @@ fn leax() {
         0x10, 0x8E, 0x43, 0x21, //      ldy #$4321
         0x30, 0x80,             //      leax ,x+
         0x30, 0x01,             //      leax 1,x
+        0x30, 0x1F,             //      leax -1,x
         0x30, 0x89, 0x01, 0x00, //      leax 256,x
         0x30, 0xA0,             //      leax ,y+
         0x30, 0xA3,             //      leax ,--y
@@ -511,7 +512,10 @@ fn leax() {
     assert_eq!(cpu.regs.x, 0x1235);
 
     cpu.step();
-    assert_eq!(cpu.regs.x, 0x1335);
+    assert_eq!(cpu.regs.x, 0x1234);
+
+    cpu.step();
+    assert_eq!(cpu.regs.x, 0x1334);
 
     cpu.step();
     assert_eq!(cpu.regs.x, 0x4321);
