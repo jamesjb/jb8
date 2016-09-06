@@ -855,7 +855,7 @@ impl <M: Mem> CPU<M> {
     fn op_NOP(&mut self) {}
 
     /// Synchronize to external event. Not implemented yet.
-    fn op_SYNC(&mut self) { unimplemented!(); }
+    fn op_SYNC(&mut self) { self.dump_regs(); }
 
     /// Causes an unconditional branch given a 16-bit offset.
     fn op_LBRA(&mut self, ea: u16) {
@@ -1459,8 +1459,9 @@ impl <M: Mem> CPU<M> {
         self.regs.pc = self.popw_s();
     }
 
+    /// For now, use this instruction to stop the emulator.
     fn op_CWAI(&mut self) {
-        unimplemented!();
+        self.running = false;
     }
 
     /// Multiply the unsigned binary numbers in the accumulators and
