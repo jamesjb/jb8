@@ -122,6 +122,7 @@ impl Regs {
 pub struct CPU<M: Mem> {
     pub regs: Regs,
     pub mem: M,
+    fetched: Vec<u8>,           // bytes fetched during op cycle
 }
 
 impl <M: Mem> CPU<M> {
@@ -142,11 +143,13 @@ impl <M: Mem> CPU<M> {
         CPU {
             regs: Regs::new(),
             mem: mem,
+            fetched: Vec::new(),
         }
     }
 
     /// Dump registers to the standard output.
     pub fn dump_regs(&self) {
+        print!("*** {:04X} REGS  ", self.regs.pc);
         self.regs.dump();
     }
 
@@ -157,8 +160,17 @@ impl <M: Mem> CPU<M> {
     /// Execute the next instruction at the program counter.
     pub fn step(&mut self) {
         let pc = self.regs.pc;
+
+        self.fetched.clear();
         let opcode = self.fetchb();
         self.execute(opcode);
+
+        print!("*** {:04X} FETCH ", pc);
+        for b in self.fetched.iter() {
+            print!("{:02X} ", *b);
+        }
+
+        println!("");
     }
 
     /// Execute the next `n` instructions starting at the
@@ -173,14 +185,16 @@ impl <M: Mem> CPU<M> {
     fn fetchb(&mut self) -> u8 {
         let val = self.mem.loadb(self.regs.pc);
         self.regs.pc = self.regs.pc.wrapping_add(1);
+        self.fetched.push(val);
         val
     }
 
     /// Read a 16-bit value from memory at `pc` then increment `pc` by 2.
     fn fetchw(&mut self) -> u16 {
-        let val = self.mem.loadw(self.regs.pc);
-        self.regs.pc = self.regs.pc.wrapping_add(2);
-        val
+        let hi = self.fetchb() as u16;
+        let lo = self.fetchb() as u16;
+
+        (hi << 8) | lo
     }
 
     /// Push a byte onto the SP stack.
@@ -244,6 +258,10 @@ impl <M: Mem> CPU<M> {
     fn imm8(&mut self) -> u16 {
         let addr = self.regs.pc;
         self.regs.pc = self.regs.pc.wrapping_add(1);
+
+        let val = self.mem.loadb(addr);
+        self.fetched.push(val);
+
         addr
     }
 
@@ -251,6 +269,12 @@ impl <M: Mem> CPU<M> {
     fn imm16(&mut self) -> u16 {
         let addr = self.regs.pc;
         self.regs.pc = self.regs.pc.wrapping_add(2);
+
+        let hi = self.mem.loadb(addr);
+        let lo = self.mem.loadb(addr.wrapping_add(1));
+        self.fetched.push(hi);
+        self.fetched.push(lo);
+
         addr
     }
 
