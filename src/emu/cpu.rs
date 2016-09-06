@@ -320,7 +320,7 @@ impl <M: Mem> CPU<M> {
         // If the top bit is clear, it's `EA = ,R + 5-bit offset`.
         if (postbyte & 0x80) == 0 {
             // Mask out 5-bit signed offset and sign extend.
-            let offset = (((postbyte & 0x1f) ^ 0x10) - 0x10) as i16;
+            let offset = (((postbyte & 0x1f) ^ 0x10).wrapping_sub(0x10)) as i16;
             let val = self.indexed_reg_val(postbyte) as i16;
             return val.wrapping_add(offset) as u16;
         }
