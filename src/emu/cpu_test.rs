@@ -484,3 +484,136 @@ fn push_pull_u() {
     cpu.dump_regs();
     assert_eq!(orig_regs, cpu.regs);
 }
+
+#[test]
+fn abx() {
+    let mut cpu = test_cpu();
+
+    cpu.mem.store(0x0100, &[        // org $100
+        0x8E, 0xFF, 0x80,           // ldx #$FF80
+        0xC6, 0xC0,                 // ldb #$C0
+        0x3A,                       // abx
+    ]);
+
+    cpu.regs.pc = 0x0100;
+
+    cpu.step_n(3);
+    cpu.dump_regs();
+
+    assert_eq!(cpu.regs.x, 0x0040);
+}
+
+#[test]
+fn rti_e_set() {
+    let mut cpu = test_cpu();
+
+    cpu.mem.store(0x0100, &[        // org $100
+        0x1A, 0x80,                 // orcc #$80   ; set E
+        0x34, 0xFF,                 // pshs pc, u, y, x, dp, b, a, cc
+        0x3B,                       // rti
+    ]);
+
+    cpu.regs.s  = 0x0400;
+    cpu.regs.pc = 0x0100;
+
+    cpu.step_n(3);
+    cpu.dump_regs();
+
+    assert_eq!(cpu.regs.s, 0x0400);
+    assert_eq!(cpu.regs.pc, 0x0104);
+    assert_flags! { cpu =>
+        CC_E: true
+    }
+}
+
+#[test]
+fn rti_e_clear() {
+    let mut cpu = test_cpu();
+
+    cpu.mem.store(0x0100, &[        // org $100
+        0x1C, 0x7F,                 // andcc #$7F   ; clear E
+        0x34, 0x81,                 // pshs pc, cc
+        0x3B,                       // rti
+    ]);
+
+    cpu.regs.s  = 0x0400;
+    cpu.regs.pc = 0x0100;
+
+    cpu.step_n(3);
+    cpu.dump_regs();
+
+    assert_eq!(cpu.regs.s, 0x0400);
+    assert_eq!(cpu.regs.pc, 0x0104);
+    assert_flags! { cpu =>
+        CC_E: false
+    }
+}
+
+#[test]
+fn mul() {
+    let mut cpu = test_cpu();
+
+    cpu.mem.store(0x0100, &[        // org $100
+        0x86, 0xFF,                 // lda #$FF
+        0xC6, 0xFF,                 // ldb #$FF
+        0x3D,                       // mul
+        0x4F,                       // clra
+        0x3D,                       // mul
+    ]);
+
+    cpu.regs.pc = 0x0100;
+
+    cpu.step_n(3);
+    cpu.dump_regs();
+    assert_eq!(cpu.regs.d(), 0xFE01);
+    assert_flags! { cpu =>
+        CC_Z: false,
+        CC_C: false
+    }
+
+    cpu.step_n(2);
+    assert_eq!(cpu.regs.d(), 0x0000);
+    assert_flags! { cpu =>
+        CC_Z: true,
+        CC_C: false
+    }
+}
+
+#[test]
+fn swi() {
+    let mut cpu = test_cpu();
+
+    // Our OS lives at 0xE000 and handles the SWI vector.
+    // When a software interrupt occurs, it writes:
+    //
+    //   $CAFE to 0x0000
+    //   $BABE to 0x0002
+    cpu.mem.store(0xE000, &[            // org $E000
+        0x8E, 0xCA, 0xFE,               // ldx #$CAFE
+        0x9F, 0x00,                     // stx <$00
+        0x10, 0x8E, 0xBA, 0xBE,         // ldy #$BABE
+        0x10, 0x9F, 0x02,               // sty <$02
+        0x3B,                           // rti
+    ]);
+
+    // Test code lives at 0x0100.
+    cpu.mem.store(0x0100, &[            // org $100
+        0x86, 0x00,                     // lda #$00
+        0x3F,                           // swi
+        0x9E, 0x00,                     // ldx <$00
+        0x10, 0x9E, 0x02,               // ldy <$02
+        0x86, 0xAA,                     // lda #$AA
+    ]);
+
+    // Store the address of the SWI handler at the vector.
+    cpu.mem.storew(0xFFFA, 0xE000);
+
+    cpu.regs.s = 0x0400;
+    cpu.regs.pc = 0x0100;
+    cpu.step_n(10);
+    cpu.dump_regs();
+
+    assert_eq!(cpu.regs.a, 0xAA);
+    assert_eq!(cpu.regs.x, 0xCAFE);
+    assert_eq!(cpu.regs.y, 0xBABE);
+}

@@ -1310,6 +1310,54 @@ impl <M: Mem> CPU<M> {
         self.regs.s = res;
     }
 
+    fn st8(&mut self, ea: u16, val: u8) {
+        self.mem.storeb(ea, val);
+        self.set_nz(val);
+        self.regs.cc.remove(CC_V);
+    }
+
+    fn st16(&mut self, ea: u16, val: u16) {
+        self.mem.storew(ea, val);
+        self.regs.cc.set_if(CC_Z, val == 0);
+        self.regs.cc.set_if(CC_N, val & 0x8000 != 0);
+        self.regs.cc.remove(CC_V);
+    }
+
+    fn op_STA(&mut self, ea: u16) {
+        let val = self.regs.a;
+        self.st8(ea, val);
+    }
+
+    fn op_STB(&mut self, ea: u16) {
+        let val = self.regs.b;
+        self.st8(ea, val);
+    }
+
+    fn op_STX(&mut self, ea: u16) {
+        let val = self.regs.x;
+        self.st16(ea, val);
+    }
+
+    fn op_STY(&mut self, ea: u16) {
+        let val = self.regs.y;
+        self.st16(ea, val);
+    }
+
+    fn op_STD(&mut self, ea: u16) {
+        let val = self.regs.d();
+        self.st16(ea, val);
+    }
+
+    fn op_STU(&mut self, ea: u16) {
+        let val = self.regs.u;
+        self.st16(ea, val);
+    }
+
+    fn op_STS(&mut self, ea: u16) {
+        let val = self.regs.s;
+        self.st16(ea, val);
+    }
+
     /// All, some, or none of the processor registers are pushed onto the
     /// hardware stack (with the exception of the hardware stack pointer
     /// itself).
@@ -1376,12 +1424,105 @@ impl <M: Mem> CPU<M> {
         if postbyte & (1 << 7) != 0 { self.regs.pc = self.popw_u(); }
     }
 
-    fn op_ABX(&mut self) {}
-    fn op_RTI(&mut self) {}
-    fn op_CWAI(&mut self) {}
-    fn op_MUL(&mut self) {}
-    fn op_RESET(&mut self) {}
-    fn op_SWI(&mut self) {}
+    /// Add the 8-bit unsigned value in accumulator B
+    /// into index register X.
+    ///
+    /// Condition Codes: Not affected.
+    fn op_ABX(&mut self) {
+        self.regs.x = self.regs.x.wrapping_add(self.regs.b as u16);
+    }
+
+    /// The saved machine state is recovered from the hardware stack and
+    /// control is returned to the interrupted program. If the recovered E
+    /// (entire) bit is clear, it indicates that only a subset of the machine
+    /// state was saved (return address and condition codes) and only that
+    /// subset is recovered.
+    fn op_RTI(&mut self) {
+        self.regs.cc = CCFlags::from_bits_truncate(self.popb_s());
+
+        if self.regs.cc.contains(CC_E) {
+            self.regs.a  = self.popb_s();
+            self.regs.b  = self.popb_s();
+            self.regs.dp = self.popb_s();
+            self.regs.x  = self.popw_s();
+            self.regs.y  = self.popw_s();
+            self.regs.u  = self.popw_s();
+        }
+
+        self.regs.pc = self.popw_s();
+    }
+
+    fn op_CWAI(&mut self) {
+        unimplemented!();
+    }
+
+    /// Multiply the unsigned binary numbers in the accumulators and
+    /// place the result in both accumulators (ACCA contains the most
+    /// significant byte of the result). Unsigned multiply allows
+    /// multiple precision operations.
+    ///
+    /// Condition Codes:
+    ///
+    ///   H - Not affected.
+    ///   N - Not affected.
+    ///   Z - Set if the result is zero; cleared otherwise.
+    ///   V - Not affected.
+    ///   C - Set if ACCB bit 7 of result is set; cleared otherwise.
+    fn op_MUL(&mut self) {
+        let a = self.regs.a as u16;
+        let b = self.regs.b as u16;
+        let r = a.wrapping_mul(b);
+        self.regs.set_d(r);
+        self.regs.cc.set_if(CC_Z, r == 0);
+        self.regs.cc.set_if(CC_C, r & 0x80 == 0x80);
+    }
+
+    /// Undocumented opcode, not yet implemented.
+    fn op_RESET(&mut self) {
+        unimplemented!();
+    }
+
+    /// Initiate a software interrupt with handler at `vec_addr`. If
+    /// `mask_int` is true, the `I` and `F` flags will be set when
+    /// calling the interrupt handler. All registers are stacked and
+    /// the `E` flag will be set.
+    fn swi(&mut self, vec_addr: u16, mask_int: bool) {
+        self.regs.cc |= CC_E;               // entire state saved
+        let regs = self.regs;
+
+        self.pushw_s(regs.pc);
+        self.pushw_s(regs.u);
+        self.pushw_s(regs.y);
+        self.pushw_s(regs.x);
+        self.pushb_s(regs.dp);
+        self.pushb_s(regs.b);
+        self.pushb_s(regs.a);
+        self.pushb_s(regs.cc.bits);
+
+        let new_pc = self.mem.loadw(vec_addr);
+        self.regs.pc = new_pc;
+
+        if mask_int {
+            self.regs.cc |= CC_I | CC_F;    // mask interrupts
+        }
+    }
+
+    /// All of the processor registers are pushed onto the hardware stack
+    /// (with the exception of the hardware stack pointer itself), and control
+    /// is transferred through the software interrupt vector. Both the normal
+    /// and fast interrupts are masked (disabled).
+    fn op_SWI(&mut self) {
+        self.swi(0xFFFA, true);
+    }
+
+    fn op_SWI2(&mut self) {
+        self.swi(0xFFF4, false);
+    }
+
+    fn op_SWI3(&mut self) {
+        self.swi(0xFFF2, false);
+    }
+
     fn op_SUBA(&mut self, ea: u16) {}
     fn op_CMPA(&mut self, ea: u16) {}
     fn op_SBCA(&mut self, ea: u16) {}
@@ -1393,9 +1534,7 @@ impl <M: Mem> CPU<M> {
     fn op_ORA(&mut self, ea: u16) {}
     fn op_ADDA(&mut self, ea: u16) {}
     fn op_CMPX(&mut self, ea: u16) {}
-    fn op_STA(&mut self, ea: u16) {}
     fn op_JSR(&mut self, ea: u16) {}
-    fn op_STX(&mut self, ea: u16) {}
     fn op_SUBB(&mut self, ea: u16) {}
     fn op_CMPB(&mut self, ea: u16) {}
     fn op_SBCB(&mut self, ea: u16) {}
@@ -1406,9 +1545,6 @@ impl <M: Mem> CPU<M> {
     fn op_ADCB(&mut self, ea: u16) {}
     fn op_ORB(&mut self, ea: u16) {}
     fn op_ADDB(&mut self, ea: u16) {}
-    fn op_STB(&mut self, ea: u16) {}
-    fn op_STD(&mut self, ea: u16) {}
-    fn op_STU(&mut self, ea: u16) {}
 
     fn op_LBRN(&mut self, ea: u16) {}
     fn op_LBHI(&mut self, ea: u16) {}
@@ -1425,13 +1561,9 @@ impl <M: Mem> CPU<M> {
     fn op_LBLT(&mut self, ea: u16) {}
     fn op_LBGT(&mut self, ea: u16) {}
     fn op_LBLE(&mut self, ea: u16) {}
-    fn op_SWI2(&mut self) {}
     fn op_CMPD(&mut self, ea: u16) {}
     fn op_CMPY(&mut self, ea: u16) {}
-    fn op_STY(&mut self, ea: u16) {}
-    fn op_STS(&mut self, ea: u16) {}
 
-    fn op_SWI3(&mut self) {}
     fn op_CMPU(&mut self, ea: u16) {}
     fn op_CMPS(&mut self, ea: u16) {}
 
